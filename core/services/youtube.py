@@ -113,7 +113,7 @@ async def download_by_url(url: str):
         "format": "bestaudio/best",
         "noplaylist": True,
         "quiet": True,
-        "extractor_args": {"youtube": {"player_client": ["default", "android"], "formats": ["missing_pot"]}},
+        "extractor_args": {"youtubepot-bgutilhttp": {"base_url": ["http://127.0.0.1:4416"]}},
         "no_warnings": True,
         "skip_download": True,
         "encoding": "utf-8",
@@ -155,7 +155,7 @@ async def download_by_url(url: str):
             "quiet": True,
             "outtmpl": os.path.join(TEMP_PATH, f"{unique_id}.%(ext)s"),
             "writethumbnail": True,
-            "extractor_args": {"youtube": {"player_client": ["default", "android"], "formats": ["missing_pot"]}},
+            "extractor_args": {"youtubepot-bgutilhttp": {"base_url": ["http://127.0.0.1:4416"]}},
             "no_warnings": True,
             "encoding": "utf-8",
             "postprocessors": [
