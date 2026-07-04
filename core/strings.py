@@ -20,6 +20,13 @@ SONG_UPDATED = "Song updated."
 INFO_EXPIRED = "Information expired."
 FAILED_TO_UPDATE = "Failed to update message: {}"
 
+SAVE_PROMPT = "💾 Save this song to a folder?"
+BUTTON_DONT_SAVE = "❌ Don't save"
+BUTTON_SAVE_ROOT = "📁 (main folder)"
+SAVED_TO = "✅ Saved to: {}"
+NOT_SAVED = "Not saved."
+SAVE_FAILED = "⚠️ Save failed: {}"
+
 
 def get_song_info_message(data, views, likes, dislikes):
     """Generates the formatted song information message."""

@@ -9,11 +9,57 @@ from core import strings
 from core.config import dp, bot, logger, MAX_SONG_DURATION_SEC, ANTI_SPAM_CALLBACK_INTERVAL
 from core.services.youtube import search_multiple, download_by_url, cleanup_temp_files, get_dislikes
 from core.services.storage import (
-  get_song_data, 
-  set_song_data, 
-  format_number_dot, 
+  get_song_data,
+  set_song_data,
+  format_number_dot,
   user_last_request_time,
 )
+from core.services.music_library import (
+  list_subfolders,
+  stage_pending_file,
+  save_pending_to_folder,
+  discard_pending,
+)
+
+# Fallback delay before an unclaimed pending file is discarded, in seconds.
+PENDING_SAVE_TIMEOUT_SEC = 300
+
+# Telegram callback_data must stay well under 64 bytes; caps how many subfolder buttons we render.
+MAX_SAVE_FOLDER_BUTTONS = 90
+
+
+async def _pending_cleanup_timeout(key: str):
+  """Discards a staged pending file if the user never picks a save destination."""
+  await asyncio.sleep(PENDING_SAVE_TIMEOUT_SEC)
+  discard_pending(key)
+
+
+async def offer_disk_save(bot, chat_id: int, key: str, audio_file_path: str, reply_to_message_id: Optional[int]):
+  """Stages the downloaded audio and offers the user a folder picker to save it to the local music library."""
+  staged_path = stage_pending_file(key, audio_file_path)
+  if not staged_path:
+    return
+
+  subfolders = list_subfolders()
+  if len(subfolders) > MAX_SAVE_FOLDER_BUTTONS:
+    logger.warning(f"MUSIC_DIR has more than {MAX_SAVE_FOLDER_BUTTONS} subfolders, truncating save folder list.")
+    subfolders = subfolders[:MAX_SAVE_FOLDER_BUTTONS]
+
+  buttons = [[InlineKeyboardButton(text=strings.BUTTON_SAVE_ROOT, callback_data=f"savedir_{key}_root")]]
+  for idx, name in enumerate(subfolders):
+    buttons.append([InlineKeyboardButton(text=name, callback_data=f"savedir_{key}_{idx}")])
+  buttons.append([InlineKeyboardButton(text=strings.BUTTON_DONT_SAVE, callback_data=f"savedir_{key}_skip")])
+
+  kb = InlineKeyboardMarkup(inline_keyboard=buttons)
+
+  await bot.send_message(
+    chat_id=chat_id,
+    text=strings.SAVE_PROMPT,
+    reply_markup=kb,
+    reply_to_message_id=reply_to_message_id,
+  )
+
+  asyncio.create_task(_pending_cleanup_timeout(key))
 
 def check_callback_spam(func):
   async def wrapper(cq: CallbackQuery):
@@ -236,8 +282,11 @@ async def choose_song(cq: CallbackQuery):
     "dislike_count": await get_dislikes(info.get("id")), "timestamp": time.time(),
   }
   set_song_data(key, message_id, new_song_data)
-  
-  cleanup_temp_files(base) 
+
+  if cq.message and cq.message.chat:
+    await offer_disk_save(bot, cq.message.chat.id, key, file, message_id)
+
+  cleanup_temp_files(base)
   await cq.answer(strings.SONG_UPDATED)
 
 
@@ -263,8 +312,73 @@ async def show_song_info(cq: CallbackQuery):
 
   msg = strings.get_song_info_message(data, views, likes, dislikes)
 
-  MAX_ALERT_LENGTH = 200 
+  MAX_ALERT_LENGTH = 200
   if len(msg) > MAX_ALERT_LENGTH:
-    msg = msg[:MAX_ALERT_LENGTH - 3] + "..." 
+    msg = msg[:MAX_ALERT_LENGTH - 3] + "..."
 
   await cq.answer(msg, show_alert=True)
+
+
+@dp.callback_query(F.data.startswith("savedir_"))
+async def save_to_directory(cq: CallbackQuery):
+  # Not decorated with check_callback_spam: the folder choice must not be silently dropped.
+  raw = cq.data[len("savedir_"):] # type: ignore
+  key, _, sel = raw.partition("_")
+
+  if sel == "skip":
+    discard_pending(key)
+    try:
+      if cq.message:
+        await cq.message.edit_text(strings.NOT_SAVED, reply_markup=None) # type: ignore
+    except (TelegramBadRequest, AttributeError, TypeError) as e:
+      logger.warning(f"Failed to edit message after skipping save for {key}: {e}")
+    await cq.answer()
+    return
+
+  data_storage = get_song_data(key)
+  if not data_storage:
+    await cq.answer(strings.INFO_EXPIRED, show_alert=True)
+    discard_pending(key)
+    return
+
+  entry: Optional[Dict[str, Any]] = data_storage.get(f"info_{key}")
+  title = entry.get("title") if entry else None
+  artist = entry.get("artist") if entry else None
+
+  if artist and title:
+    dest_basename = f"{artist} - {title}"
+  elif title:
+    dest_basename = title
+  else:
+    dest_basename = "audio"
+
+  if sel == "root":
+    subfolder = None
+  else:
+    try:
+      idx = int(sel)
+    except ValueError:
+      logger.warning(f"Invalid save folder selector in callback data: {cq.data}")
+      await cq.answer("Invalid selection.", show_alert=True)
+      return
+
+    subs = list_subfolders()
+    if idx < 0 or idx >= len(subs):
+      await cq.answer("Folder no longer available.", show_alert=True)
+      return
+    subfolder = subs[idx]
+
+  try:
+    save_pending_to_folder(key, subfolder, dest_basename)
+  except Exception as e:
+    logger.exception("Failed to save song to disk")
+    await cq.answer(strings.SAVE_FAILED.format(str(e)), show_alert=True)
+    return
+
+  discard_pending(key)
+  try:
+    if cq.message:
+      await cq.message.edit_text(strings.SAVED_TO.format(subfolder or "MUSIC_DIR"), reply_markup=None) # type: ignore
+  except (TelegramBadRequest, AttributeError, TypeError) as e:
+    logger.warning(f"Failed to edit message after saving song for {key}: {e}")
+  await cq.answer("Saved")

@@ -19,6 +19,7 @@ from core.services.storage import (
     set_song_data,
     get_song_data
 )
+from core.handlers.callbacks import offer_disk_save
 
 class BotProcessingError(Exception): pass
 class NoResultsError(BotProcessingError): pass
@@ -150,6 +151,8 @@ async def message_handler(message: types.Message):
                 logger.error(f"Failed to save song to DB: {e}")
 
         set_song_data(key, sent.message_id, song_data)
+
+        await offer_disk_save(bot, message.chat.id, key, file, sent.message_id)
 
         asyncio.create_task(remove_not_right_button(sent, key, message.from_user.full_name))
 

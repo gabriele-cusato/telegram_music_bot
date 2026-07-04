@@ -18,6 +18,10 @@ os.makedirs(TEMP_PATH, exist_ok=True)
 LOG_FILE = os.path.join(DATA_PATH, "bot.log")
 load_dotenv(dotenv_path=os.path.join(DATA_PATH, ".env"))
 
+MUSIC_DIR: str = os.getenv("MUSIC_DIR", r"C:\Users\gabri\Music")
+PENDING_SAVE_PATH = os.path.join(TEMP_PATH, "pending")
+os.makedirs(PENDING_SAVE_PATH, exist_ok=True)
+
 file_handler = RotatingFileHandler(
     LOG_FILE, 
     maxBytes=10*1024*1024,
