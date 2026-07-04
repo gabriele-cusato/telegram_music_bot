@@ -5,7 +5,7 @@ export PATH="$PWD/ffmpeg-bin:$PATH"
 export PYTHONUNBUFFERED=1
 
 # Node per il PO token provider (bgutil): binario scaricato nella build command.
-export PATH="$PWD/node-v20.18.0-linux-x64/bin:$PATH"
+export PATH="$PWD/node-v22.12.0-linux-x64/bin:$PATH"
 # Server PO token su porta 4416: serve a yt-dlp per ottenere i formati da IP datacenter.
 node bgutil-ytdlp-pot-provider/server/build/main.js &
 sleep 2
