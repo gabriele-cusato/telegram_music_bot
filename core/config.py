@@ -9,6 +9,7 @@ from typing import List
 from aiogram import Bot, Dispatcher, Router
 from aiogram.client.default import DefaultBotProperties
 from logging.handlers import RotatingFileHandler
+import shutil
 
 import sys
 
@@ -51,7 +52,17 @@ FUZZY_DUPLICATE_THRESHOLD: int = int(os.getenv("FUZZY_DUPLICATE_THRESHOLD", 90))
 MAX_FILE_SIZE_MB: int = int(os.getenv("MAX_FILE_SIZE_MB", 50))
 MAX_SONG_DURATION_MIN: int = int(os.getenv("MAX_SONG_DURATION_MIN", 15))
 ALLOW_PRIVATE_CHAT: bool = os.getenv("ALLOW_PRIVATE_CHAT", "false").lower() == "true"
-YT_COOKIES_FILE: str = os.getenv("YT_COOKIES_FILE", "")
+
+_cookies_source = os.getenv("YT_COOKIES_FILE", "")
+YT_COOKIES_FILE: str = ""
+if _cookies_source and os.path.exists(_cookies_source):
+    _writable_cookies_path = os.path.join(DATA_PATH, "cookies.txt")
+    try:
+        shutil.copyfile(_cookies_source, _writable_cookies_path)
+        YT_COOKIES_FILE = _writable_cookies_path
+    except Exception as e:
+        logger.error(f"Could not copy cookies file to writable path: {e}")
+
 INFO_EXPIRATION_HOURS: int = int(os.getenv("INFO_EXPIRATION_HOURS", 10))
 ANTI_SPAM_INTERVAL: int = int(os.getenv("ANTI_SPAM_INTERVAL", 15))
 ANTI_SPAM_CALLBACK_INTERVAL: float = float(
