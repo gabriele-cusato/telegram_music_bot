@@ -102,8 +102,8 @@ async def save_audio_to_db(audio, db_name: str, title_threshold: int):
         except aiosqlite.IntegrityError:
             logging.warning(f"Attempt to add duplicate in {db_name}: {title}. Ignored.")
             return "duplicate_exact"
-        except Exception as e:
-            logging.error(f"Critical DB error ({db_name}) during save: {e}")
+        except Exception:
+            logging.exception(f"Critical DB error ({db_name}) during save")
             return False
 
 async def get_song_by_id(song_id: int, db_name: str):
@@ -132,8 +132,8 @@ async def delete_song_by_id(song_id: int, db_name: str):
             try:
                 with open(Config.DELETED_SONGS_LOG_PATH, 'a', encoding='utf-8') as f:
                     f.write(log_message)
-            except Exception as e:
-                logging.error(f"Failed to write to deleted songs log: {e}")
+            except Exception:
+                logging.exception("Failed to write to deleted songs log")
 
         await db.execute("DELETE FROM songs_fts WHERE rowid = ?", (song_id,))
         await db.execute("DELETE FROM songs WHERE id = ?", (song_id,))

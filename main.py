@@ -30,8 +30,8 @@ async def main():
         if not initialize_yt_dlp():
             logger.critical("FATAL: Failed to ensure yt-dlp package is ready. Aborting.")
             return
-    except RuntimeError as e:
-        logger.critical(f"FATAL: yt-dlp initialization failed: {e}")
+    except RuntimeError:
+        logger.critical("FATAL: yt-dlp initialization failed", exc_info=True)
         return
         
     if ENABLE_INLINE_SEARCH:
@@ -41,8 +41,8 @@ async def main():
             await init_inline_db(CHAT_DB_PATH)
             dp.include_router(inline_router)
             logger.info("Inline router registered successfully.")
-        except Exception as e:
-            logger.critical(f"FATAL ERROR during Inline Search initialization: {e}")
+        except Exception:
+            logger.critical("FATAL ERROR during Inline Search initialization", exc_info=True)
             
     dp.include_router(channel_router)
     logger.info("Channel indexing router registered successfully.")
@@ -62,5 +62,5 @@ if __name__ == "__main__":
         asyncio.run(main())
     except (KeyboardInterrupt, SystemExit):
         logger.warning("Bot stopped!")
-    except Exception as e:
-        logger.critical(f"Critical error during bot runtime: {e}")
+    except Exception:
+        logger.critical("Critical error during bot runtime", exc_info=True)

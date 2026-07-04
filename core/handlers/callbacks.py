@@ -222,7 +222,7 @@ async def choose_song(cq: CallbackQuery):
 
   except TelegramBadRequest as e:
     cleanup_temp_files(base)
-    logger.error(f"TelegramBadRequest when updating media: {e}")
+    logger.exception("TelegramBadRequest when updating media")
     await cq.answer(strings.FAILED_TO_UPDATE.format(str(e)), show_alert=True)
     return
 

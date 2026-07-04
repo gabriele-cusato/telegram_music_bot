@@ -81,8 +81,8 @@ def set_song_data(cache_id: str, message_id: int, data: Dict[str, Any]):
             json.dumps(other_data)
         ))
         conn.commit()
-    except Exception as e:
-        logger.error(f"Error saving song data to DB for ID {cache_id}: {e}")
+    except Exception:
+        logger.exception(f"Error saving song data to DB for ID {cache_id}")
     finally:
         conn.close()
 
@@ -124,8 +124,8 @@ def get_song_data(cache_id: str) -> Optional[Dict[str, Any]]:
             }
         
         return None
-    except Exception as e:
-        logger.error(f"Error retrieving song data from DB for ID {cache_id}: {e}")
+    except Exception:
+        logger.exception(f"Error retrieving song data from DB for ID {cache_id}")
         return None
     finally:
         conn.close()
@@ -144,8 +144,8 @@ def cleanup_expired_data():
         if deleted_count > 0:
             logger.info(f"Cleaned up {deleted_count} expired entries from song data cache.")
             
-    except Exception as e:
-        logger.error(f"Error during database cleanup: {e}")
+    except Exception:
+        logger.exception("Error during database cleanup")
     finally:
         conn.close()
 

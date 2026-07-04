@@ -1,7 +1,10 @@
 import aiosqlite
+import logging
 from rapidfuzz import process, fuzz
 from typing import List, Tuple
 import os
+
+logger = logging.getLogger(__name__)
 
 async def search_rapidfuzz(query: str, db_name: str, limit: int = 10, cutoff: int = 65) -> List[Tuple[int,str,str,str,int,str]]:
 
@@ -41,6 +44,7 @@ async def search_rapidfuzz(query: str, db_name: str, limit: int = 10, cutoff: in
         try:
             _, _id, file_id, title, performer, is_cached = candidates[idx]
         except Exception:
+            logger.exception("Errore nel mapping del match rapidfuzz, candidato saltato")
             continue
             
         key = (_id, file_id)

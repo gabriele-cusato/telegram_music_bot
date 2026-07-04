@@ -32,6 +32,9 @@ console_handler = logging.StreamHandler(sys.stdout)
 console_handler.setFormatter(
     logging.Formatter("[%(asctime)s] [%(levelname)s] %(message)s", datefmt="%H:%M:%S")
 )
+# La console deve mostrare da INFO in su (quindi anche WARNING/ERROR/CRITICAL):
+# su Render.com non si accede ai file di log, gli errori servono in console.
+console_handler.setLevel(logging.INFO)
 
 logging.basicConfig(level=logging.INFO, handlers=[file_handler, console_handler])
 logger = logging.getLogger(__name__)
@@ -60,8 +63,8 @@ if _cookies_source and os.path.exists(_cookies_source):
     try:
         shutil.copyfile(_cookies_source, _writable_cookies_path)
         YT_COOKIES_FILE = _writable_cookies_path
-    except Exception as e:
-        logger.error(f"Could not copy cookies file to writable path: {e}")
+    except Exception:
+        logger.exception("Could not copy cookies file to writable path")
 
 INFO_EXPIRATION_HOURS: int = int(os.getenv("INFO_EXPIRATION_HOURS", 10))
 ANTI_SPAM_INTERVAL: int = int(os.getenv("ANTI_SPAM_INTERVAL", 15))

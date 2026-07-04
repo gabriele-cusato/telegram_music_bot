@@ -33,7 +33,7 @@ async def handle_new_audio_post(message: Message, bot: Bot):
             return
 
     except TelegramBadRequest as e:
-        logger.error(
+        logger.exception(
             f"❌ API error during file_id verification {audio.file_id}: {e}. DELETING {message.message_id}."
         )
         await message.delete()

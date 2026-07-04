@@ -70,8 +70,8 @@ async def get_dislikes(video_id: str) -> Optional[int]:
         )
     except asyncio.TimeoutError:
         logger.warning(f"Failed to fetch dislikes for {video_id} (Timeout)")
-    except Exception as e:
-        logger.warning(f"Unexpected error in get_dislikes for {video_id}: {e}")
+    except Exception:
+        logger.exception(f"Unexpected error in get_dislikes for {video_id}")
     return None
 
 
@@ -95,7 +95,7 @@ async def search_multiple(query: str) -> List[Dict[str, Any]]:
                 result = ydl.extract_info(f"ytsearch10:{query}", download=False)
                 return result.get("entries", [])
             except DownloadError:
-                logger.error(f"yt-dlp search failed for query: {query}")
+                logger.exception(f"yt-dlp search failed for query: {query}")
                 return []
             except Exception as e:
                 logger.error(f"Unexpected error during search: {e}")
@@ -115,6 +115,9 @@ async def download_by_url(url: str):
         "encoding": "utf-8",
         "postprocessors": [],
     }
+
+    if config.YT_COOKIES_FILE:
+        info_opts["cookiefile"] = config.YT_COOKIES_FILE
 
     base = None
 
@@ -155,6 +158,9 @@ async def download_by_url(url: str):
                 {"key": "FFmpegMetadata"},
             ],
         }
+
+        if config.YT_COOKIES_FILE:
+            download_opts["cookiefile"] = config.YT_COOKIES_FILE
 
         with YoutubeDL(download_opts) as ydl:  # type: ignore
             try:

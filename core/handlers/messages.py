@@ -52,7 +52,7 @@ async def remove_not_right_button(sent_message, key, full_name):
             reply_markup=current_kb
         )
     except Exception:
-        pass
+        logger.exception("Failed to update reply markup in remove_not_right_button")
 
 
 @dp.message()
@@ -91,7 +91,7 @@ async def message_handler(message: types.Message):
     try:
         await message.delete()
     except Exception:
-        pass
+        logger.exception("Failed to delete command message")
 
     status = await message.answer(strings.STATUS_SEARCHING)
 
@@ -146,8 +146,8 @@ async def message_handler(message: types.Message):
         if ENABLE_INLINE_SEARCH and sent.audio:
             try:
                 await save_audio_to_db(sent.audio, CHAT_DB_PATH, FUZZY_DUPLICATE_THRESHOLD)
-            except Exception as e:
-                logger.error(f"Failed to save song to DB: {e}")
+            except Exception:
+                logger.exception("Failed to save song to DB")
 
         set_song_data(key, sent.message_id, song_data)
 
@@ -184,14 +184,16 @@ async def message_handler(message: types.Message):
     finally:
         if status:
             try: await status.delete()
-            except: pass
+            except Exception:
+                logger.exception("Failed to delete status message")
         if base:
             cleanup_temp_files(base)
 
     err = await message.answer(msg_error)
     await asyncio.sleep(5)
     try: await err.delete()
-    except Exception: pass
+    except Exception:
+        logger.exception("Failed to delete error message")
 
 
 @dp.message(F.audio)
@@ -225,5 +227,5 @@ async def direct_audio_handler(message: types.Message):
         elif result and result.startswith("duplicate"):
             logger.info(f"Audio skipped (duplicate): {message.audio.performer} - {message.audio.title}")
 
-    except Exception as e:
-        logger.error(f"Error saving direct audio to DB: {e}")
+    except Exception:
+        logger.exception("Error saving direct audio to DB")

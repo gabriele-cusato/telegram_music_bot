@@ -94,19 +94,18 @@ async def inline_music_search(inline_query: InlineQuery, bot: Bot):
                     caption=""
                 )
                 cached_results.append(cached)
-            except Exception as e:
-                logger.warning(
-                    "Error creating InlineQueryResultCachedAudio for ID %s: %s. Track skipped.",
-                    song_id, e
+            except Exception:
+                logger.exception(
+                    "Error creating InlineQueryResultCachedAudio for ID %s. Track skipped.",
+                    song_id
                 )
-                pass
 
     results = cached_results
 
     try:
         await inline_query.answer(results[:50], is_personal=False, cache_time=3600)
-    except TelegramBadRequest as e:
-        logger.error(f"inline.answer failed completely: {e}.")
+    except TelegramBadRequest:
+        logger.exception("inline.answer failed completely.")
         try:
             await inline_query.answer([], is_personal=False, cache_time=1)
         except Exception:
