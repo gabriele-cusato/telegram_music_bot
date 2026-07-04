@@ -88,6 +88,8 @@ async def message_handler(message: types.Message):
     query = text[len(strings.COMMAND_PREFIX):].strip()
     if not query: return
 
+    logger.info(f"Query received from user {user_id}: {query}")
+
     try:
         await message.delete()
     except Exception:
@@ -106,6 +108,8 @@ async def message_handler(message: types.Message):
             first = results[0]
             url = first.get("url") or first.get("webpage_url")
             if not url: raise NoUrlError("NO_URL")
+
+            logger.info(f"Top result selected: {url}")
 
             info, file, thumb, base = await download_by_url(url)
 
@@ -137,11 +141,13 @@ async def message_handler(message: types.Message):
 
         await status.delete()
 
+        logger.info(f"Sending audio to chat {message.chat.id}: {info.get('title')}")
         sent = await bot.send_audio(
             chat_id=message.chat.id, audio=audio, title=info.get("title"),
             performer=info.get("uploader"), thumbnail=thumbnail, reply_markup=kb,
             reply_to_message_id=message.reply_to_message.message_id if message.reply_to_message else None
         )
+        logger.info(f"Audio sent successfully to chat {message.chat.id}")
 
         if ENABLE_INLINE_SEARCH and sent.audio:
             try:

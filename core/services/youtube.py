@@ -90,10 +90,13 @@ async def search_multiple(query: str) -> List[Dict[str, Any]]:
         ydl_opts["cookiefile"] = config.YT_COOKIES_FILE
 
     def search():
+        logger.info(f"Search started for query: {query}")
         with YoutubeDL(ydl_opts) as ydl:  # type: ignore
             try:
                 result = ydl.extract_info(f"ytsearch10:{query}", download=False)
-                return result.get("entries", [])
+                entries = result.get("entries", [])
+                logger.info(f"Search completed: {len(entries)} results for query: {query}")
+                return entries
             except DownloadError:
                 logger.exception(f"yt-dlp search failed for query: {query}")
                 return []
@@ -105,6 +108,7 @@ async def search_multiple(query: str) -> List[Dict[str, Any]]:
 
 
 async def download_by_url(url: str):
+    logger.info(f"Download started for {url}")
     info_opts = {
         "format": "bestaudio/best",
         "noplaylist": True,
@@ -208,7 +212,9 @@ async def download_by_url(url: str):
             return info, audio_file, thumb, base
 
     try:
-        return await asyncio.to_thread(pre_check_and_download)
+        result = await asyncio.to_thread(pre_check_and_download)
+        logger.info(f"Download completed for {url}")
+        return result
     except Exception as e:
         logger.warning(
             f"Error during download for {url}: {e}. Attempting cleanup if base is known."
