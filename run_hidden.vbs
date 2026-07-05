@@ -1,0 +1,1 @@
+CreateObject("WScript.Shell").Run """C:\Projects\YtMusicDownload\telegram_music_bot\start_bot.bat""", 0, False

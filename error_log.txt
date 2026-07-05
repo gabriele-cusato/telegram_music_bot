@@ -1,0 +1,19 @@
+[20:52:01] [INFO] Bot is allowed in ALL public chats (ALLOWED_CHAT_ID is empty).
+[20:52:02] [INFO] Starting bot initialization...
+[20:52:02] [INFO] yt-dlp check interval not yet expired. No update needed.
+[20:52:02] [INFO] yt-dlp package is available.
+[20:52:02] [INFO] Inline Search module enabled. Initializing databases...
+[20:52:02] [INFO] Database data\music_channel.db is up to date.
+[20:52:02] [INFO] Database data\music_chat.db is up to date.
+[20:52:02] [INFO] Inline router registered successfully.
+[20:52:02] [INFO] Channel indexing router registered successfully.
+[20:52:02] [INFO] Starting polling with 5 concurrent download limit.
+[20:52:02] [INFO] Bot commands menu registered successfully.
+[20:52:02] [INFO] Start polling
+[20:52:02] [INFO] Run polling for bot @music_dnwldr_bot id=8861650189 - 'MusicDownloaderBot'
+[20:52:02] [INFO] Update id=364550608 is handled. Duration 0 ms by bot id=8861650189
+[20:52:11] [INFO] Search source used for query 'Esibizionista': YT Music
+[download]   0.0% of    3.26MiB at  546.99KiB/s ETA 00:06[download]   0.1% of    3.26MiB at    1.32MiB/s ETA 00:02[download]   0.2% of    3.26MiB at    2.77MiB/s ETA 00:01[download]   0.4% of    3.26MiB at    5.17MiB/s ETA 00:00[download]   0.9% of    3.26MiB at    4.76MiB/s ETA 00:00[download]   1.9% of    3.26MiB at    5.33MiB/s ETA 00:00[download]   3.8% of    3.26MiB at    7.15MiB/s ETA 00:00[download]   7.6% of    3.26MiB at   10.44MiB/s ETA 00:00[download]  15.3% of    3.26MiB at   15.03MiB/s ETA 00:00[download]  30.7% of    3.26MiB at   23.52MiB/s ETA 00:00[download]  61.4% of    3.26MiB at   38.57MiB/s ETA 00:00[download] 100.0% of    3.26MiB at   51.32MiB/s ETA 00:00[download] 100% of    3.26MiB in 00:00:00 at 13.34MiB/s                                                         [20:52:20] [WARNING] Fuzzy duplicate found in data\music_chat.db: 'Esibizionista' (100.0%) is similar to 'Annalisa - Esibizionista (Official Video)'.
+[20:52:20] [INFO] Staged pending file for key f6ac02a3: temp\pending\f6ac02a3.mp3
+[20:52:20] [INFO] Staged song for save, key f6ac02a3 in chat 1262772814
+[20:52:20] [INFO] Update id=364550609 is handled. Duration 10110 ms by bot id=8861650189
