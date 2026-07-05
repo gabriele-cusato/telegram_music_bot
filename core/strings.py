@@ -1,6 +1,11 @@
 import random
 
-COMMAND_PREFIX = "music " 
+COMMAND_PREFIX = "music "
+LOG_COMMAND_PREFIX = "log"
+
+LOG_USAGE = "⚠️ Usage: log [info|error|warning] [N] [gg/mm/aa]"
+LOG_NO_RESULTS = "No matching log entries."
+LOG_TRUNCATED = "⚠️ Output truncated: showing only the most recent messages."
 
 STATUS_SEARCHING = "🔍 Searching..."
 ERROR_PREFIX = "❌ Error: "
@@ -23,9 +28,11 @@ FAILED_TO_UPDATE = "Failed to update message: {}"
 SAVE_PROMPT = "💾 Save this song to a folder?"
 BUTTON_DONT_SAVE = "❌ Don't save"
 BUTTON_SAVE_ROOT = "📁 (main folder)"
+BUTTON_SAVE_SRV = "💾 Save Srv"
 SAVED_TO = "✅ Saved to: {}"
 NOT_SAVED = "Not saved."
 SAVE_FAILED = "⚠️ Save failed: {}"
+SAVE_EXPIRED = "⌛ This song can no longer be saved."
 
 
 def get_song_info_message(data, views, likes, dislikes):

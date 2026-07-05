@@ -139,7 +139,15 @@ async def download_by_url(url: str):
             'no_warnings': True,
             'encoding': 'utf-8',
             'postprocessors': [
-                {'key': 'FFmpegMetadata'}, 
+                # Estrae l'audio ed effettua un vero encode a mp3 (non un semplice rinomina di estensione)
+                {'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3', 'preferredquality': '192'},
+                # Scrive i tag ID3 (titolo, artista/uploader, album se disponibile) nel file mp3
+                {'key': 'FFmpegMetadata', 'add_metadata': True},
+                # Converte la thumbnail (spesso webp) in jpg, formato compatibile con l'embed su mp3
+                {'key': 'FFmpegThumbnailsConvertor', 'format': 'jpg'},
+                # Incorpora la copertina nel mp3; already_have_thumbnail evita che il file thumb venga cancellato,
+                # perché serve ancora per l'invio separato a Telegram
+                {'key': 'EmbedThumbnail', 'already_have_thumbnail': True},
             ]
         }
 
@@ -153,19 +161,13 @@ async def download_by_url(url: str):
             except Exception:
                 raise
 
+            # Con FFmpegExtractAudio il file prodotto è già un vero mp3: nessuna rinomina necessaria
             audio_file = None
             for ext in ['mp3', 'm4a', 'webm', 'opus', 'ogg']:
                 candidate = f"{base}.{ext}"
                 if os.path.exists(candidate):
                     audio_file = candidate
                     break
-
-            if audio_file and not audio_file.endswith('.mp3'):
-                new_mp3 = f"{base}.mp3"
-                if os.path.exists(new_mp3):
-                    os.remove(new_mp3)
-                os.rename(audio_file, new_mp3)
-                audio_file = new_mp3
 
             thumb = None
             for ext in ['jpg','jpeg','png','webp']:

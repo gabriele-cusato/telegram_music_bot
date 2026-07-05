@@ -6,7 +6,7 @@ from aiogram import F, types
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, InputMediaAudio, BufferedInputFile
 from aiogram.exceptions import TelegramBadRequest
 from core import strings
-from core.config import dp, bot, logger, MAX_SONG_DURATION_SEC, ANTI_SPAM_CALLBACK_INTERVAL
+from core.config import dp, bot, logger, MAX_SONG_DURATION_SEC, ANTI_SPAM_CALLBACK_INTERVAL, INFO_EXPIRATION_HOURS
 from core.services.youtube import search_multiple, download_by_url, cleanup_temp_files, get_dislikes
 from core.services.storage import (
   get_song_data,
@@ -19,10 +19,11 @@ from core.services.music_library import (
   stage_pending_file,
   save_pending_to_folder,
   discard_pending,
+  pending_exists,
 )
 
-# Fallback delay before an unclaimed pending file is discarded, in seconds.
-PENDING_SAVE_TIMEOUT_SEC = 300
+# Delay before an unclaimed pending file is discarded, allineato alla finestra di scadenza delle info in cache.
+PENDING_SAVE_TIMEOUT_SEC = INFO_EXPIRATION_HOURS * 3600
 
 # Telegram callback_data must stay well under 64 bytes; caps how many subfolder buttons we render.
 MAX_SAVE_FOLDER_BUTTONS = 90
@@ -31,15 +32,12 @@ MAX_SAVE_FOLDER_BUTTONS = 90
 async def _pending_cleanup_timeout(key: str):
   """Discards a staged pending file if the user never picks a save destination."""
   await asyncio.sleep(PENDING_SAVE_TIMEOUT_SEC)
+  logger.info(f"Pending save timeout expired for key {key}, discarding")
   discard_pending(key)
 
 
-async def offer_disk_save(bot, chat_id: int, key: str, audio_file_path: str, reply_to_message_id: Optional[int]):
-  """Stages the downloaded audio and offers the user a folder picker to save it to the local music library."""
-  staged_path = stage_pending_file(key, audio_file_path)
-  if not staged_path:
-    return
-
+def _build_save_folder_kb(key: str) -> InlineKeyboardMarkup:
+  """Builds the folder picker keyboard (root + subfolders + don't save) for the given pending key."""
   subfolders = list_subfolders()
   if len(subfolders) > MAX_SAVE_FOLDER_BUTTONS:
     logger.warning(f"MUSIC_DIR has more than {MAX_SAVE_FOLDER_BUTTONS} subfolders, truncating save folder list.")
@@ -50,14 +48,20 @@ async def offer_disk_save(bot, chat_id: int, key: str, audio_file_path: str, rep
     buttons.append([InlineKeyboardButton(text=name, callback_data=f"savedir_{key}_{idx}")])
   buttons.append([InlineKeyboardButton(text=strings.BUTTON_DONT_SAVE, callback_data=f"savedir_{key}_skip")])
 
-  kb = InlineKeyboardMarkup(inline_keyboard=buttons)
+  return InlineKeyboardMarkup(inline_keyboard=buttons)
 
-  await bot.send_message(
-    chat_id=chat_id,
-    text=strings.SAVE_PROMPT,
-    reply_markup=kb,
-    reply_to_message_id=reply_to_message_id,
-  )
+
+async def offer_disk_save(bot, chat_id: int, key: str, audio_file_path: str, reply_to_message_id: Optional[int]):
+  """Stages the downloaded audio for a later save via the 'Save Srv' button, without sending any message.
+
+  reply_to_message_id non è più usato (nessun messaggio da inviare): resta nella firma solo per non
+  cambiare i chiamanti esistenti in messages.py e choose_song.
+  """
+  staged_path = stage_pending_file(key, audio_file_path)
+  if not staged_path:
+    return
+
+  logger.info(f"Staged song for save, key {key} in chat {chat_id}")
 
   asyncio.create_task(_pending_cleanup_timeout(key))
 
@@ -252,12 +256,13 @@ async def choose_song(cq: CallbackQuery):
   sender_name = cq.from_user.full_name
   btn_text = strings.BUTTON_REQUESTER.format(sender_name)
   kb = InlineKeyboardMarkup(inline_keyboard=[
-    [InlineKeyboardButton(text=btn_text, callback_data=f"info_{key}")]
+    [InlineKeyboardButton(text=btn_text, callback_data=f"info_{key}")],
+    [InlineKeyboardButton(text=strings.BUTTON_SAVE_SRV, callback_data=f"savesrv_{key}")],
   ])
 
   try:
     if cq.message and cq.message.chat:
-      await bot.edit_message_media( # type: ignore 
+      await bot.edit_message_media( # type: ignore
         media=InputMediaAudio(media=audio, title=info.get("title"), performer=info.get("uploader"), thumbnail=thumbnail),
         chat_id=cq.message.chat.id, 
         message_id=message_id, 
@@ -319,6 +324,36 @@ async def show_song_info(cq: CallbackQuery):
   await cq.answer(msg, show_alert=True)
 
 
+@dp.callback_query(F.data.startswith("savesrv_"))
+async def save_srv(cq: CallbackQuery):
+  # Not decorated with check_callback_spam: la richiesta di salvataggio non deve essere silenziosamente scartata.
+  key = cq.data[len("savesrv_"):] # type: ignore
+
+  data_storage = get_song_data(key)
+  if not data_storage:
+    await cq.answer(strings.INFO_EXPIRED, show_alert=True)
+    discard_pending(key)
+    return
+
+  if not pending_exists(key):
+    await cq.answer(strings.SAVE_EXPIRED, show_alert=True)
+    return
+
+  try:
+    if cq.message:
+      await bot.send_message(
+        chat_id=cq.message.chat.id,
+        text=strings.SAVE_PROMPT,
+        reply_markup=_build_save_folder_kb(key),
+        reply_to_message_id=cq.message.message_id,
+      )
+  except (TelegramBadRequest, AttributeError, TypeError) as e:
+    logger.warning(f"Failed to send save folder picker for {key}: {e}")
+
+  logger.info(f"Save folder picker offered for key {key}")
+  await cq.answer()
+
+
 @dp.callback_query(F.data.startswith("savedir_"))
 async def save_to_directory(cq: CallbackQuery):
   # Not decorated with check_callback_spam: the folder choice must not be silently dropped.
@@ -326,6 +361,7 @@ async def save_to_directory(cq: CallbackQuery):
   key, _, sel = raw.partition("_")
 
   if sel == "skip":
+    logger.info(f"User skipped saving for key {key}")
     discard_pending(key)
     try:
       if cq.message:
@@ -375,6 +411,7 @@ async def save_to_directory(cq: CallbackQuery):
     await cq.answer(strings.SAVE_FAILED.format(str(e)), show_alert=True)
     return
 
+  logger.info(f"Song saved for key {key} to folder: {subfolder or 'MUSIC_DIR'}")
   discard_pending(key)
   try:
     if cq.message:

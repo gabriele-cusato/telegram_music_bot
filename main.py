@@ -9,6 +9,7 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from core.config import dp, bot, logger, CONCURRENT_DOWNLOAD_LIMIT, ENABLE_INLINE_SEARCH, CHAT_DB_PATH, CHANNEL_DB_PATH
 from core.services import storage
+from core.services.music_library import prune_orphan_pending
 from core.services.youtube import close_global_session
 from core.handlers import messages, callbacks
 from core.handlers.channel_posts import router as channel_router
@@ -48,7 +49,12 @@ async def main():
     logger.info("Channel indexing router registered successfully.")
             
     storage.cleanup_expired_data()
-    
+
+    # pulire i file rimasti in temp/pending orfani da un riavvio del bot (info in cache già scadute o mai riscritte)
+    removed = prune_orphan_pending(lambda k: storage.get_song_data(k) is not None)
+    if removed > 0:
+        logger.info(f"Removed {removed} orphan pending file(s) on startup.")
+
     logger.info(f"Starting polling with {CONCURRENT_DOWNLOAD_LIMIT} concurrent download limit.")
     
     try:

@@ -32,7 +32,8 @@ file_handler.setFormatter(logging.Formatter(
     '[%(asctime)s] [%(levelname)s] %(message)s', 
     datefmt='%Y-%m-%d %H:%M:%S'
 ))
-file_handler.setLevel(logging.ERROR)
+# portare INFO anche su file per avere una cronologia leggibile offline (es. comando log)
+file_handler.setLevel(logging.INFO)
 console_handler = logging.StreamHandler(sys.stdout)
 console_handler.setFormatter(logging.Formatter(
     '[%(asctime)s] [%(levelname)s] %(message)s', 

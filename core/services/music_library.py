@@ -4,7 +4,7 @@
 
 import os
 import shutil
-from typing import List, Optional
+from typing import Callable, List, Optional
 
 from core.config import logger, MUSIC_DIR, PENDING_SAVE_PATH
 
@@ -42,6 +42,7 @@ def stage_pending_file(key: str, src_audio_path: str) -> Optional[str]:
         logger.exception(f"Failed to stage pending file for key {key}")
         return None
 
+    logger.info(f"Staged pending file for key {key}: {dest_path}")
     return dest_path
 
 
@@ -64,6 +65,7 @@ def save_pending_to_folder(key: str, subfolder: Optional[str], dest_basename: st
     dest_path = os.path.join(dest_dir, f"{safe_basename}.mp3")
 
     shutil.copyfile(pending_path, dest_path)
+    logger.info(f"Song saved to disk: {dest_path}")
     return dest_path
 
 
@@ -73,5 +75,42 @@ def discard_pending(key: str):
     try:
         if os.path.exists(pending_path):
             os.remove(pending_path)
+            logger.info(f"Discarded pending file for key {key}")
     except Exception:
         logger.exception(f"Failed to discard pending file for key {key}")
+
+
+def pending_exists(key: str) -> bool:
+    """Checks whether a staged pending file still exists for the given key."""
+    return os.path.exists(os.path.join(PENDING_SAVE_PATH, f"{key}.mp3"))
+
+
+def prune_orphan_pending(is_valid_key: Callable[[str], bool]) -> int:
+    """Removes pending files whose key no longer has valid song data (es. dopo un riavvio del bot).
+
+    is_valid_key viene passato dal chiamante (main.py) invece di importare qui core.services.storage,
+    per evitare di accoppiare questo modulo puramente filesystem al livello di persistenza.
+    """
+    removed = 0
+    try:
+        entries = os.listdir(PENDING_SAVE_PATH)
+    except Exception:
+        logger.exception(f"Failed to list PENDING_SAVE_PATH for orphan pruning: {PENDING_SAVE_PATH}")
+        return removed
+
+    for entry in entries:
+        if not entry.endswith(".mp3"):
+            continue
+        key = entry[:-len(".mp3")]
+        if is_valid_key(key):
+            continue
+        try:
+            os.remove(os.path.join(PENDING_SAVE_PATH, entry))
+            removed += 1
+        except Exception:
+            logger.exception(f"Failed to remove orphan pending file: {entry}")
+
+    if removed > 0:
+        logger.info(f"Pruned {removed} orphan pending file(s) from {PENDING_SAVE_PATH}")
+
+    return removed

@@ -1,4 +1,5 @@
 import asyncio
+import html
 import time
 import os
 import uuid
@@ -16,9 +17,9 @@ from core.config import (
 from core.services.youtube import search_multiple, download_by_url, cleanup_temp_files, get_dislikes
 from core.services.storage import (
     user_last_request_time,
-    set_song_data,
-    get_song_data
+    set_song_data
 )
+from core.services.log_reader import read_log_records, parse_ddmmyy_to_iso
 from core.handlers.callbacks import offer_disk_save
 
 class BotProcessingError(Exception): pass
@@ -33,27 +34,109 @@ if ENABLE_INLINE_SEARCH:
     from core.services.inline_search.database import save_audio_to_db
 
 
-async def remove_not_right_button(sent_message, key, full_name):
-    await asyncio.sleep(60)
-    try:
-        current_data = get_song_data(key)
-        if not current_data:
-            return
+LOG_LEVELS = ("info", "error", "warning")
+LOG_MAX_CHUNK_CHARS = 3800
+LOG_MAX_MESSAGES = 6
+LOG_DEFAULT_LIMIT = 25
 
-        current_entry = current_data.get(f"info_{key}")
-        if not current_entry:
-            return
 
-        current_kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text=strings.BUTTON_REQUESTER.format(full_name), callback_data=f"info_{key}")]
-        ])
-        await bot.edit_message_reply_markup(
-            chat_id=sent_message.chat.id,
-            message_id=sent_message.message_id,
-            reply_markup=current_kb
-        )
-    except Exception:
-        pass
+def _is_log_command(message: types.Message) -> bool:
+    """Riconosce il comando `log` senza intercettare `music ...` o altro testo."""
+    text = message.text or ""
+    lowered = text.lower()
+    return lowered == strings.LOG_COMMAND_PREFIX or lowered.startswith(strings.LOG_COMMAND_PREFIX + " ")
+
+
+def _parse_log_args(args_text: str):
+    """Interpreta i token dopo `log`: livello, N, data gg/mm/aa, in qualunque ordine.
+
+    Ritorna (level, limit, date_iso, valid). valid=False se un token non è
+    riconosciuto o un tipo è duplicato.
+    """
+    level = None
+    limit = None
+    date_iso = None
+
+    for token in args_text.split():
+        lowered = token.lower()
+        if lowered in LOG_LEVELS:
+            if level is not None:
+                return None, None, None, False
+            level = lowered
+        elif token.isdigit():
+            if limit is not None:
+                return None, None, None, False
+            limit = int(token)
+        else:
+            parsed_date = parse_ddmmyy_to_iso(token)
+            if parsed_date is None or date_iso is not None:
+                return None, None, None, False
+            date_iso = parsed_date
+
+    if limit is None:
+        limit = LOG_DEFAULT_LIMIT
+
+    return level, limit, date_iso, True
+
+
+def _build_log_chunks(records):
+    """Compone i record (già filtrati) in blocchi di testo HTML-escaped sotto il limite Telegram."""
+    escaped_records = [html.escape(record) for record in records]
+
+    chunks = []
+    current_lines = []
+    current_len = 0
+    for record in escaped_records:
+        record_len = len(record) + 1  # +1 per il separatore "\n"
+        if current_lines and current_len + record_len > LOG_MAX_CHUNK_CHARS:
+            chunks.append("\n".join(current_lines))
+            current_lines = []
+            current_len = 0
+        current_lines.append(record)
+        current_len += record_len
+
+    if current_lines:
+        chunks.append("\n".join(current_lines))
+
+    return chunks
+
+
+@dp.message(_is_log_command)
+async def log_command_handler(message: types.Message):
+    # comando riservato alla chat privata, indipendentemente da ALLOW_PRIVATE_CHAT/ALLOWED_CHAT_IDS:
+    # in gruppo non si risponde per non rivelarne l'esistenza
+    if message.chat.type != 'private':
+        return
+
+    user_id = message.from_user.id
+    if user_id in BLOCKED_USER_IDS:
+        logger.info(f"Blocked user {user_id} tried to use the log command.")
+        return
+
+    text = message.text.strip()
+    args_text = "" if text.lower() == strings.LOG_COMMAND_PREFIX else text[len(strings.LOG_COMMAND_PREFIX) + 1:].strip()
+
+    level, limit, date_iso, valid = _parse_log_args(args_text)
+    if not valid:
+        await message.answer(strings.LOG_USAGE)
+        return
+
+    records = read_log_records(level, limit, date_iso)
+    if not records:
+        await message.answer(strings.LOG_NO_RESULTS)
+        return
+
+    chunks = _build_log_chunks(records)
+
+    truncated = len(chunks) > LOG_MAX_MESSAGES
+    if truncated:
+        chunks = chunks[-LOG_MAX_MESSAGES:]
+
+    for chunk in chunks:
+        await message.answer(f"<pre>{chunk}</pre>")
+
+    if truncated:
+        await message.answer(strings.LOG_TRUNCATED)
 
 
 @dp.message()
@@ -133,7 +216,8 @@ async def message_handler(message: types.Message):
         btn_text = strings.BUTTON_REQUESTER.format(sender_name)
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text=btn_text, callback_data=f"info_{key}"),
-             InlineKeyboardButton(text=strings.BUTTON_NOT_RIGHT, callback_data=f"alt_{key}")]
+             InlineKeyboardButton(text=strings.BUTTON_NOT_RIGHT, callback_data=f"alt_{key}")],
+            [InlineKeyboardButton(text=strings.BUTTON_SAVE_SRV, callback_data=f"savesrv_{key}")],
         ])
 
         await status.delete()
@@ -153,8 +237,6 @@ async def message_handler(message: types.Message):
         set_song_data(key, sent.message_id, song_data)
 
         await offer_disk_save(bot, message.chat.id, key, file, sent.message_id)
-
-        asyncio.create_task(remove_not_right_button(sent, key, message.from_user.full_name))
 
     except NoResultsError:
         msg_error = strings.ERROR_PREFIX + strings.ERROR_NO_RESULTS
