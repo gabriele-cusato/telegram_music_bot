@@ -7,6 +7,7 @@ import sys
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
+from aiogram.types import BotCommand, BotCommandScopeAllPrivateChats, BotCommandScopeDefault
 from core.config import dp, bot, logger, CONCURRENT_DOWNLOAD_LIMIT, ENABLE_INLINE_SEARCH, CHAT_DB_PATH, CHANNEL_DB_PATH
 from core.services import storage
 from core.services.music_library import prune_orphan_pending
@@ -56,7 +57,27 @@ async def main():
         logger.info(f"Removed {removed} orphan pending file(s) on startup.")
 
     logger.info(f"Starting polling with {CONCURRENT_DOWNLOAD_LIMIT} concurrent download limit.")
-    
+
+    # registrare il menu comandi Telegram (autocomplete + pulsante Menu): un eventuale
+    # fallimento non deve impedire l'avvio del polling.
+    try:
+        await bot.set_my_commands(
+            [BotCommand(command="music", description="Search & download a song: /music <query>")],
+            scope=BotCommandScopeDefault(),
+        )
+        await bot.set_my_commands(
+            [
+                BotCommand(command="music", description="Search & download a song"),
+                BotCommand(command="log", description="View recent bot logs"),
+                BotCommand(command="priority", description="Set music folder priority"),
+                BotCommand(command="delete", description="Find & delete duplicate songs"),
+            ],
+            scope=BotCommandScopeAllPrivateChats(),
+        )
+        logger.info("Bot commands menu registered successfully.")
+    except Exception as e:
+        logger.warning(f"Failed to register bot commands menu: {e}")
+
     try:
         await dp.start_polling(bot)
     finally:

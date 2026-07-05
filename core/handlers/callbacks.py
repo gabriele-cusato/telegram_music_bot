@@ -1,12 +1,13 @@
 import time
 import asyncio
 import os
-from typing import Dict, Any, Optional, Tuple
+import uuid
+from typing import Dict, Any, List, Optional, Tuple
 from aiogram import F, types
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, InputMediaAudio, BufferedInputFile
 from aiogram.exceptions import TelegramBadRequest
 from core import strings
-from core.config import dp, bot, logger, MAX_SONG_DURATION_SEC, ANTI_SPAM_CALLBACK_INTERVAL, INFO_EXPIRATION_HOURS
+from core.config import dp, bot, logger, MAX_SONG_DURATION_SEC, ANTI_SPAM_CALLBACK_INTERVAL, INFO_EXPIRATION_HOURS, MUSIC_DIR
 from core.services.youtube import search_multiple, download_by_url, cleanup_temp_files, get_dislikes
 from core.services.storage import (
   get_song_data,
@@ -21,12 +22,29 @@ from core.services.music_library import (
   discard_pending,
   pending_exists,
 )
+from core.services import library_priority
 
 # Delay before an unclaimed pending file is discarded, allineato alla finestra di scadenza delle info in cache.
 PENDING_SAVE_TIMEOUT_SEC = INFO_EXPIRATION_HOURS * 3600
 
 # Telegram callback_data must stay well under 64 bytes; caps how many subfolder buttons we render.
 MAX_SAVE_FOLDER_BUTTONS = 90
+
+# Stesso cap del save picker: le righe di priorità usano callback_data basati su indice.
+MAX_PRIORITY_BUTTONS = 90
+
+# Cap sul numero di candidati alla cancellazione mostrati in un'unica sessione dedup, per
+# restare sotto i limiti di Telegram su numero di bottoni e lunghezza del testo.
+MAX_DEDUP_CANDIDATES = 60
+
+# Budget di caratteri per il testo della lista dedup: Telegram limita i messaggi a 4096 char,
+# si resta ben sotto (margine per header e nota di troncamento) per evitare "message is too long".
+DEDUP_TEXT_CHAR_BUDGET = 3500
+
+# Store effimero delle sessioni dedup in corso: sid -> {"candidates": {cid: {...}}}.
+# In memoria di processo, non persistito: una sessione sopravvive fino a conferma/annullamento
+# o al riavvio del bot.
+dedup_sessions: Dict[str, Dict[str, Any]] = {}
 
 
 async def _pending_cleanup_timeout(key: str):
@@ -49,6 +67,115 @@ def _build_save_folder_kb(key: str) -> InlineKeyboardMarkup:
   buttons.append([InlineKeyboardButton(text=strings.BUTTON_DONT_SAVE, callback_data=f"savedir_{key}_skip")])
 
   return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def build_priority_kb(order) -> InlineKeyboardMarkup:
+  """Builds the priority reordering keyboard: one row per folder with a name button and ▲▼ buttons.
+
+  callback_data usa l'indice della cartella nell'ordine (non il nome), per restare sotto il limite di
+  64 byte imposto da Telegram.
+  """
+  if len(order) > MAX_PRIORITY_BUTTONS:
+    logger.warning(f"Priority order has more than {MAX_PRIORITY_BUTTONS} folders, truncating priority list.")
+    order = order[:MAX_PRIORITY_BUTTONS]
+
+  buttons = []
+  for idx, folder in enumerate(order):
+    # una riga per cartella: nome + ▲ + ▼ affiancati
+    buttons.append([
+      InlineKeyboardButton(text=f"📁 {folder}", callback_data="prio_noop"),
+      InlineKeyboardButton(text=strings.BUTTON_PRIO_UP, callback_data=f"prio_up_{idx}"),
+      InlineKeyboardButton(text=strings.BUTTON_PRIO_DOWN, callback_data=f"prio_down_{idx}"),
+    ])
+
+  # riga finale con il bottone per confermare e chiudere l'ordine attuale
+  buttons.append([
+    InlineKeyboardButton(text=strings.BUTTON_PRIO_CONFIRM, callback_data="prio_confirm"),
+  ])
+
+  return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def _build_dedup_kb(sid: str, session: Dict[str, Any]) -> InlineKeyboardMarkup:
+  """Builds the dedup candidate keyboard: one toggle button per candidate, plus confirm/cancel."""
+  buttons = []
+  for cid, candidate in session["candidates"].items():
+    mark = "☑️ " if candidate["selected"] else "☐ "
+    buttons.append([InlineKeyboardButton(text=mark + candidate["label"], callback_data=f"dd_tog_{sid}_{cid}")])
+
+  buttons.append([
+    InlineKeyboardButton(text=strings.BUTTON_DEDUP_CONFIRM, callback_data=f"dd_ok_{sid}"),
+    InlineKeyboardButton(text=strings.BUTTON_DEDUP_CANCEL, callback_data=f"dd_no_{sid}"),
+  ])
+
+  return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def build_dedup_session(groups: List[Dict[str, Any]]) -> Tuple[str, str, InlineKeyboardMarkup]:
+  """Creates a new dedup session from the duplicate groups and builds its text + keyboard.
+
+  Ogni gruppo contribuisce una riga di testo (keep) e i suoi candidati alla cancellazione
+  come bottoni toggle. Costruzione incrementale, gruppo per gruppo e candidato per candidato,
+  con doppio budget: MAX_DEDUP_CANDIDATES sul numero di bottoni e DEDUP_TEXT_CHAR_BUDGET sulla
+  lunghezza del testo. Al primo dei due limiti raggiunto si interrompe subito, avvisando con
+  DEDUP_TRUNCATED.
+
+  INVARIANTE DI SICUREZZA (critico, non rimuovere): `candidates` (e quindi la sessione salvata
+  in dedup_sessions) contiene ESATTAMENTE i candidati che diventano bottoni nella keyboard
+  costruita da _build_dedup_kb. Un candidato troncato dal budget non viene mai aggiunto a
+  `candidates`, quindi non può mai comparire come bottone né essere cancellato da dd_ok, che
+  itera solo su session["candidates"].
+  """
+  sid = uuid.uuid4().hex[:6]
+  candidates: Dict[str, Dict[str, Any]] = {}
+  text_lines = [strings.DEDUP_HEADER]
+  current_len = len(strings.DEDUP_HEADER)
+  cid_counter = 0
+  truncated = False
+
+  for group in groups:
+    if truncated:
+      break
+
+    keep = group["keep"]
+    keep_line = f"🎵 {keep['name']} — keep in {keep['folder']}"
+    keep_line_added = False
+
+    for candidate in group["candidates"]:
+      if len(candidates) >= MAX_DEDUP_CANDIDATES:
+        truncated = True
+        break
+
+      # la keep-line del gruppo pesa sul budget solo alla prima accettazione di un suo candidato:
+      # se il gruppo non riesce ad aggiungere nemmeno un candidato, la riga non entra nel testo.
+      pending_len = 0 if keep_line_added else len(keep_line) + 1
+      if current_len + pending_len >= DEDUP_TEXT_CHAR_BUDGET:
+        truncated = True
+        break
+
+      if not keep_line_added:
+        text_lines.append(keep_line)
+        current_len += pending_len
+        keep_line_added = True
+
+      cid = str(cid_counter)
+      cid_counter += 1
+      label = f"{candidate['name']} @ {candidate['folder']}"
+      # aggiunto a `candidates` SOLO qui, dopo aver superato entrambi i controlli di budget: questo
+      # è ciò che garantisce l'invariante di sicurezza descritta sopra.
+      candidates[cid] = {"path": candidate["path"], "label": label, "selected": True}
+
+  if truncated:
+    text_lines.append(strings.DEDUP_TRUNCATED)
+
+  session = {"candidates": candidates}
+  dedup_sessions[sid] = session
+
+  text = "\n".join(text_lines)
+  # la kb va costruita DOPO aver finalizzato `candidates`, così i bottoni resi coincidono
+  # esattamente con i candidati salvati nella sessione (nessun disallineamento possibile).
+  kb = _build_dedup_kb(sid, session)
+  return sid, text, kb
 
 
 async def offer_disk_save(bot, chat_id: int, key: str, audio_file_path: str, reply_to_message_id: Optional[int]):
@@ -224,7 +351,12 @@ async def choose_song(cq: CallbackQuery):
     elif "LONG_AUDIO" in error_str: await cq.answer(strings.ERROR_LONG_AUDIO, show_alert=True)
     else:
       logger.error(f"Download Error for alternative: {error_str}", exc_info=True)
-      await cq.answer(f"Error: {error_str}", show_alert=True)
+      # Estrae la descrizione concisa di yt-dlp, togliendo il prefisso sentinel interno
+      if "YT_DOWNLOAD_FAILED" in error_str:
+        detail = error_str.split("YT_DOWNLOAD_FAILED:", 1)[-1].strip()
+      else:
+        detail = error_str
+      await cq.answer(f"Error: {detail[:190]}", show_alert=True)
     
     sender_name = cq.from_user.full_name
     btn_text = strings.BUTTON_REQUESTER.format(sender_name)
@@ -260,12 +392,16 @@ async def choose_song(cq: CallbackQuery):
     [InlineKeyboardButton(text=strings.BUTTON_SAVE_SRV, callback_data=f"savesrv_{key}")],
   ])
 
+  # Titolo/artista puliti quando la fonte è YT Music (track/artist); fallback a title/uploader
+  clean_title = info.get("track") or info.get("title")
+  clean_artist = info.get("artist") or info.get("uploader")
+
   try:
     if cq.message and cq.message.chat:
       await bot.edit_message_media( # type: ignore
-        media=InputMediaAudio(media=audio, title=info.get("title"), performer=info.get("uploader"), thumbnail=thumbnail),
-        chat_id=cq.message.chat.id, 
-        message_id=message_id, 
+        media=InputMediaAudio(media=audio, title=clean_title, performer=clean_artist, thumbnail=thumbnail),
+        chat_id=cq.message.chat.id,
+        message_id=message_id,
         reply_markup=kb
 )
     else:
@@ -279,7 +415,7 @@ async def choose_song(cq: CallbackQuery):
 
   new_song_data = {
     **entry,
-    "title": info.get("title"), "artist": info.get("uploader"), "thumb": thumb, 
+    "title": clean_title, "artist": clean_artist, "thumb": thumb,
     "file": file, "base": base, "url": url, "requester": cq.from_user.id,
     "duration": info.get("duration"), "upload_date": info.get("upload_date"),
     "view_count": info.get("view_count") or 0, 
@@ -379,14 +515,9 @@ async def save_to_directory(cq: CallbackQuery):
 
   entry: Optional[Dict[str, Any]] = data_storage.get(f"info_{key}")
   title = entry.get("title") if entry else None
-  artist = entry.get("artist") if entry else None
 
-  if artist and title:
-    dest_basename = f"{artist} - {title}"
-  elif title:
-    dest_basename = title
-  else:
-    dest_basename = "audio"
+  # Il nome del file salvato è solo il titolo pulito (i tag ID3 restano invariati).
+  dest_basename = title or "audio"
 
   if sel == "root":
     subfolder = None
@@ -419,3 +550,149 @@ async def save_to_directory(cq: CallbackQuery):
   except (TelegramBadRequest, AttributeError, TypeError) as e:
     logger.warning(f"Failed to edit message after saving song for {key}: {e}")
   await cq.answer("Saved")
+
+
+@dp.callback_query(F.data.startswith("prio_"))
+async def priority_reorder(cq: CallbackQuery):
+  # Not decorated with check_callback_spam: il riordino non deve essere silenziosamente scartato.
+  action = cq.data[len("prio_"):] # type: ignore
+
+  if action == "noop":
+    await cq.answer()
+    return
+
+  if action == "confirm":
+    order = library_priority.get_order()
+    ordered_list = "\n".join(f"{i + 1}. {folder}" for i, folder in enumerate(order))
+    try:
+      if cq.message:
+        await cq.message.delete()
+        await bot.send_message(chat_id=cq.message.chat.id, text=strings.PRIORITY_CONFIRMED.format(ordered_list))
+    except (TelegramBadRequest, AttributeError, TypeError) as e:
+      logger.warning(f"Failed to delete/send message on priority confirm: {e}")
+    await cq.answer()
+    return
+
+  if action.startswith("up_"):
+    delta = -1
+    idx_text = action[len("up_"):]
+  elif action.startswith("down_"):
+    delta = 1
+    idx_text = action[len("down_"):]
+  else:
+    logger.warning(f"Unrecognized priority callback data: {cq.data}")
+    await cq.answer()
+    return
+
+  try:
+    idx = int(idx_text)
+  except ValueError:
+    logger.warning(f"Invalid priority index in callback data: {cq.data}")
+    await cq.answer()
+    return
+
+  new_order = library_priority.apply_move(idx, delta)
+
+  try:
+    if cq.message:
+      await cq.message.edit_reply_markup(reply_markup=build_priority_kb(new_order)) # type: ignore
+  except (TelegramBadRequest, AttributeError, TypeError) as e:
+    if "message is not modified" not in str(e):
+      logger.warning(f"Failed to re-render priority keyboard: {e}")
+
+  await cq.answer()
+
+
+@dp.callback_query(F.data.startswith("dd_"))
+async def dedup_callback(cq: CallbackQuery):
+  # Not decorated with check_callback_spam: l'operazione è distruttiva, il toggle/conferma/annulla
+  # non deve essere silenziosamente scartato.
+  parts = cq.data.split("_") # type: ignore
+
+  if len(parts) < 3:
+    logger.warning(f"Unrecognized dedup callback data: {cq.data}")
+    await cq.answer()
+    return
+
+  action = parts[1]
+  sid = parts[2]
+
+  session = dedup_sessions.get(sid)
+  if session is None:
+    await cq.answer("Session expired.", show_alert=True)
+    return
+
+  if action == "tog":
+    if len(parts) < 4:
+      logger.warning(f"Unrecognized dedup toggle callback data: {cq.data}")
+      await cq.answer()
+      return
+
+    cid = parts[3]
+    candidate = session["candidates"].get(cid)
+    if candidate is None:
+      await cq.answer()
+      return
+
+    candidate["selected"] = not candidate["selected"]
+    try:
+      if cq.message:
+        await cq.message.edit_reply_markup(reply_markup=_build_dedup_kb(sid, session)) # type: ignore
+    except (TelegramBadRequest, AttributeError, TypeError) as e:
+      logger.warning(f"Failed to re-render dedup keyboard for session {sid}: {e}")
+    await cq.answer()
+    return
+
+  if action == "no":
+    del dedup_sessions[sid]
+    try:
+      if cq.message:
+        await cq.message.edit_text(strings.DEDUP_CANCELLED, reply_markup=None) # type: ignore
+    except (TelegramBadRequest, AttributeError, TypeError) as e:
+      logger.warning(f"Failed to edit message on dedup cancel for session {sid}: {e}")
+    await cq.answer()
+    return
+
+  if action == "ok":
+    deleted_labels = []
+    for candidate in session["candidates"].values():
+      if not candidate["selected"]:
+        continue
+      path = candidate["path"]
+      # controllo difensivo: cancella solo se il path esiste ed è effettivamente dentro MUSIC_DIR,
+      # a protezione da eventuali path malformati.
+      real_path = os.path.realpath(path)
+      real_music_dir = os.path.realpath(MUSIC_DIR)
+      if not os.path.exists(real_path) or os.path.commonpath([real_path, real_music_dir]) != real_music_dir:
+        logger.warning(f"Skipped deletion of path outside MUSIC_DIR or missing: {path}")
+        continue
+
+      try:
+        os.remove(path)
+        deleted_labels.append(candidate["label"])
+        logger.info(f"Deleted duplicate file: {path}")
+      except Exception:
+        logger.exception(f"Failed to delete duplicate file: {path}")
+
+    del dedup_sessions[sid]
+
+    if deleted_labels:
+      lines = [strings.DEDUP_DONE_HEADER.format(len(deleted_labels))]
+      lines.extend(f"🗑 {label}" for label in deleted_labels)
+      result_text = "\n".join(lines)
+      # limite di sicurezza sulla lunghezza del messaggio (limite Telegram ~4096 char): tronca e segnala
+      if len(result_text) > 3800:
+        result_text = result_text[:3800] + "\n..."
+    else:
+      result_text = strings.DEDUP_DONE_NONE
+
+    try:
+      if cq.message:
+        await cq.message.edit_text(result_text, reply_markup=None) # type: ignore
+    except (TelegramBadRequest, AttributeError, TypeError) as e:
+      logger.warning(f"Failed to edit message on dedup confirm for session {sid}: {e}")
+    await cq.answer("Deleted")
+    return
+
+  logger.warning(f"Unrecognized dedup action in callback data: {cq.data}")
+  await cq.answer()

@@ -6,6 +6,7 @@ import uuid
 import glob
 import aiohttp
 from typing import List, Dict, Any, Optional
+from urllib.parse import quote_plus
 from yt_dlp import YoutubeDL
 from yt_dlp.utils import DownloadError
 
@@ -80,17 +81,45 @@ async def search_multiple(query: str) -> List[Dict[str, Any]]:
         'encoding': 'utf-8',
         'postprocessors': [],
     }
-    def search():
+    def is_valid_entry(entry: Dict[str, Any]) -> bool:
+        # Scarta le voci senza id/url (es. header di sezione) o senza titolo
+        return bool(entry) and bool(entry.get("id") or entry.get("url")) and bool(entry.get("title"))
+
+    def search_youtube_music() -> List[Dict[str, Any]]:
+        music_url = f"https://music.youtube.com/search?q={quote_plus(query)}"
         with YoutubeDL(ydl_opts) as ydl: # type: ignore
-            try:
-                result = ydl.extract_info(f"ytsearch10:{query}", download=False) 
-                return result.get("entries", [])
-            except DownloadError:
-                logger.error(f"yt-dlp search failed for query: {query}")
-                return []
-            except Exception as e:
-                logger.error(f"Unexpected error during search: {e}")
-                raise
+            result = ydl.extract_info(music_url, download=False)
+            entries = result.get("entries", []) if result else []
+            return [e for e in entries if is_valid_entry(e)][:10]
+
+    def search_youtube_fallback() -> List[Dict[str, Any]]:
+        with YoutubeDL(ydl_opts) as ydl: # type: ignore
+            result = ydl.extract_info(f"ytsearch10:{query}", download=False)
+            return result.get("entries", []) if result else []
+
+    def search():
+        # Prova prima YouTube Music: dà titoli già puliti (senza "feat.", "Official Video", ecc.)
+        try:
+            music_entries = search_youtube_music()
+            if music_entries:
+                logger.info(f"Search source used for query '{query}': YT Music")
+                return music_entries
+        except DownloadError as e:
+            logger.warning(f"YT Music search failed for query '{query}', falling back to YouTube: {e}")
+        except Exception as e:
+            logger.warning(f"Unexpected error during YT Music search for query '{query}', falling back to YouTube: {e}")
+
+        # Fallback: ricerca YouTube normale, comportamento invariato rispetto a prima
+        try:
+            entries = search_youtube_fallback()
+            logger.info(f"Search source used for query '{query}': YouTube fallback")
+            return entries
+        except DownloadError:
+            logger.error(f"yt-dlp search failed for query: {query}")
+            return []
+        except Exception as e:
+            logger.error(f"Unexpected error during search: {e}")
+            raise
     return await asyncio.to_thread(search)
 
 
@@ -115,7 +144,7 @@ async def download_by_url(url: str):
                 info = ydl.extract_info(url, download=False)
             except DownloadError as e:
                 logger.error(f"yt-dlp pre-check failed for {url}: {e}")
-                raise Exception("YT_DOWNLOAD_FAILED")
+                raise Exception(f"YT_DOWNLOAD_FAILED: {e}")
             except Exception:
                 raise
 
@@ -157,7 +186,7 @@ async def download_by_url(url: str):
                 base = os.path.splitext(ydl.prepare_filename(info))[0]
             except DownloadError as e:
                 logger.error(f"yt-dlp download failed for {url}: {e}")
-                raise Exception("YT_DOWNLOAD_FAILED")
+                raise Exception(f"YT_DOWNLOAD_FAILED: {e}")
             except Exception:
                 raise
 

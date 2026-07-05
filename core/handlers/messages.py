@@ -20,7 +20,9 @@ from core.services.storage import (
     set_song_data
 )
 from core.services.log_reader import read_log_records, parse_ddmmyy_to_iso
-from core.handlers.callbacks import offer_disk_save
+from core.services import library_priority
+from core.services.library_dedup import find_duplicate_groups
+from core.handlers.callbacks import offer_disk_save, build_priority_kb, build_dedup_session, dedup_sessions
 
 class BotProcessingError(Exception): pass
 class NoResultsError(BotProcessingError): pass
@@ -40,11 +42,24 @@ LOG_MAX_MESSAGES = 6
 LOG_DEFAULT_LIMIT = 25
 
 
+def _split_command(text: str):
+    """Estrae (nome_comando, argomenti) da un testo comando.
+
+    Tollera sia la forma senza slash (`log ...`) sia quella con slash (`/log ...`),
+    e rimuove l'eventuale suffisso `@nomebot` che Telegram aggiunge nei gruppi.
+    """
+    t = (text or "").strip()
+    if t.startswith("/"):
+        t = t[1:]
+    first, _, rest = t.partition(" ")
+    first = first.split("@", 1)[0].lower()
+    return first, rest.strip()
+
+
 def _is_log_command(message: types.Message) -> bool:
-    """Riconosce il comando `log` senza intercettare `music ...` o altro testo."""
-    text = message.text or ""
-    lowered = text.lower()
-    return lowered == strings.LOG_COMMAND_PREFIX or lowered.startswith(strings.LOG_COMMAND_PREFIX + " ")
+    """Riconosce il comando `log`/`/log` senza intercettare `music ...` o altro testo."""
+    name, _ = _split_command(message.text)
+    return name == strings.LOG_COMMAND_PREFIX
 
 
 def _parse_log_args(args_text: str):
@@ -113,8 +128,7 @@ async def log_command_handler(message: types.Message):
         logger.info(f"Blocked user {user_id} tried to use the log command.")
         return
 
-    text = message.text.strip()
-    args_text = "" if text.lower() == strings.LOG_COMMAND_PREFIX else text[len(strings.LOG_COMMAND_PREFIX) + 1:].strip()
+    _, args_text = _split_command(message.text)
 
     level, limit, date_iso, valid = _parse_log_args(args_text)
     if not valid:
@@ -137,6 +151,69 @@ async def log_command_handler(message: types.Message):
 
     if truncated:
         await message.answer(strings.LOG_TRUNCATED)
+
+
+def _is_priority_command(message: types.Message) -> bool:
+    """Riconosce il comando `priority`/`/priority` senza intercettare `music ...`, `log` o altro testo."""
+    name, _ = _split_command(message.text)
+    return name == strings.PRIORITY_COMMAND_PREFIX
+
+
+@dp.message(_is_priority_command)
+async def priority_command_handler(message: types.Message):
+    # comando riservato alla chat privata, come `log`: in gruppo non si risponde per non rivelarne l'esistenza
+    if message.chat.type != 'private':
+        return
+
+    user_id = message.from_user.id
+    if user_id in BLOCKED_USER_IDS:
+        logger.info(f"Blocked user {user_id} tried to use the priority command.")
+        return
+
+    order = library_priority.get_order()
+    if not order:
+        await message.answer(strings.PRIORITY_EMPTY)
+        return
+
+    await message.answer(strings.PRIORITY_PROMPT, reply_markup=build_priority_kb(order))
+
+
+def _is_dedup_command(message: types.Message) -> bool:
+    """Riconosce il comando `delete`/`/delete` senza intercettare `music ...`, `log`, `priority` o altro testo."""
+    name, _ = _split_command(message.text)
+    return name == strings.DEDUP_COMMAND_PREFIX
+
+
+@dp.message(_is_dedup_command)
+async def dedup_command_handler(message: types.Message):
+    # comando riservato alla chat privata, come `log`/`priority`: in gruppo non si risponde
+    # per non rivelarne l'esistenza. Operazione distruttiva su file reali di MUSIC_DIR.
+    if message.chat.type != 'private':
+        return
+
+    user_id = message.from_user.id
+    if user_id in BLOCKED_USER_IDS:
+        logger.info(f"Blocked user {user_id} tried to use the dedup command.")
+        return
+
+    # lo scan del filesystem + il clustering fuzzy possono essere lenti: eseguiti in thread
+    # per non bloccare il loop asyncio.
+    groups = await asyncio.to_thread(find_duplicate_groups)
+    if not groups:
+        await message.answer(strings.DEDUP_NONE)
+        return
+
+    sid, text, kb = build_dedup_session(groups)
+    logger.info(f"Dedup session {sid} created with {len(groups)} duplicate group(s) for user {user_id}")
+
+    try:
+        await message.answer(text, reply_markup=kb)
+    except TelegramBadRequest as e:
+        logger.error(f"Failed to send dedup list for session {sid}: {e}")
+        # rimuove la sessione appena creata: senza una keyboard mostrata all'utente, i suoi
+        # candidati non devono restare cancellabili da un dd_ok mai raggiungibile.
+        dedup_sessions.pop(sid, None)
+        await message.answer(strings.DEDUP_SEND_FAILED)
 
 
 @dp.message()
@@ -163,13 +240,13 @@ async def message_handler(message: types.Message):
         return
 
     text = message.text or ""
-    if not text.lower().startswith(strings.COMMAND_PREFIX): return
+    name, query = _split_command(text)
+    if name != "music": return
 
     now = time.time()
     if now - user_last_request_time.get(user_id, 0) < ANTI_SPAM_INTERVAL: return
     user_last_request_time[user_id] = now
 
-    query = text[len(strings.COMMAND_PREFIX):].strip()
     if not query: return
 
     try:
@@ -204,8 +281,12 @@ async def message_handler(message: types.Message):
         sender_name = message.from_user.full_name
         key = uuid.uuid4().hex[:8]
 
+        # Titolo/artista puliti quando la fonte è YT Music (track/artist); fallback a title/uploader
+        clean_title = info.get("track") or info.get("title")
+        clean_artist = info.get("artist") or info.get("uploader")
+
         song_data = {
-            "title": info.get("title"), "artist": info.get("uploader"), "thumb": thumb,
+            "title": clean_title, "artist": clean_artist, "thumb": thumb,
             "file": file, "base": base, "query": query, "url": url,
             "requester": user_id, "duration": info.get("duration"), "upload_date": info.get("upload_date"),
             "view_count": info.get("view_count"), "like_count": info.get("like_count"),
@@ -223,8 +304,8 @@ async def message_handler(message: types.Message):
         await status.delete()
 
         sent = await bot.send_audio(
-            chat_id=message.chat.id, audio=audio, title=info.get("title"),
-            performer=info.get("uploader"), thumbnail=thumbnail, reply_markup=kb,
+            chat_id=message.chat.id, audio=audio, title=clean_title,
+            performer=clean_artist, thumbnail=thumbnail, reply_markup=kb,
             reply_to_message_id=message.reply_to_message.message_id if message.reply_to_message else None
         )
 
@@ -261,7 +342,12 @@ async def message_handler(message: types.Message):
              msg_error = strings.ERROR_PREFIX + strings.ERROR_TOO_LARGE
         else:
             logger.error(f"Download/Search Error: {error_str}", exc_info=True)
-            msg_error = strings.ERROR_PREFIX + error_str
+            # Estrae la descrizione concisa di yt-dlp, togliendo il prefisso sentinel interno
+            if "YT_DOWNLOAD_FAILED" in error_str:
+                detail = error_str.split("YT_DOWNLOAD_FAILED:", 1)[-1].strip()
+            else:
+                detail = error_str
+            msg_error = strings.ERROR_PREFIX + html.escape(detail[:300])
 
     else:
         return

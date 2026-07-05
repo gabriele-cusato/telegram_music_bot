@@ -2,10 +2,29 @@ import random
 
 COMMAND_PREFIX = "music "
 LOG_COMMAND_PREFIX = "log"
+PRIORITY_COMMAND_PREFIX = "priority"
+DEDUP_COMMAND_PREFIX = "delete"
 
 LOG_USAGE = "⚠️ Usage: log [info|error|warning] [N] [gg/mm/aa]"
 LOG_NO_RESULTS = "No matching log entries."
 LOG_TRUNCATED = "⚠️ Output truncated: showing only the most recent messages."
+
+PRIORITY_PROMPT = "📂 Folder priority (top = highest). Use ▲▼ to reorder:"
+PRIORITY_EMPTY = "No subfolders in the music library yet."
+BUTTON_PRIO_UP = "▲"
+BUTTON_PRIO_DOWN = "▼"
+BUTTON_PRIO_CONFIRM = "✅ Confirm Order"
+PRIORITY_CONFIRMED = "📂 Priority order saved:\n{}"
+
+DEDUP_NONE = "✅ No cross-folder duplicates found."
+DEDUP_HEADER = "🗑 Duplicates found. Uncheck what you want to KEEP, then confirm deletion:"
+DEDUP_CANCELLED = "Cancelled. Nothing deleted."
+DEDUP_DONE_HEADER = "✅ Deleted {} file(s):"
+DEDUP_DONE_NONE = "No files deleted."
+DEDUP_TRUNCATED = "⚠️ Too many duplicates: showing only the first ones."
+DEDUP_SEND_FAILED = "⚠️ Could not show the duplicates list (it was too long to send). Please try again."
+BUTTON_DEDUP_CONFIRM = "✅ Confirm delete"
+BUTTON_DEDUP_CANCEL = "❌ Cancel"
 
 STATUS_SEARCHING = "🔍 Searching..."
 ERROR_PREFIX = "❌ Error: "
