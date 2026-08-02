@@ -1,0 +1,39 @@
+# Questo file è un MODELLO di unità systemd, non un file già pronto all'uso.
+# I segnaposto __UTENTE__, __GRUPPO__, __CARTELLA_PROGETTO__ e __PYTHON__
+# vengono sostituiti con i valori reali di questa macchina da
+# RUN_BOT_STARTUP.sh al momento dell'installazione. Non copiarlo a mano in
+# /etc/systemd/system/: usa RUN_BOT_STARTUP.sh, che sostituisce i segnaposto
+# e installa il risultato al posto giusto.
+
+[Unit]
+Description=Bot Telegram per la libreria musicale
+# Attende che la rete sia effettivamente raggiungibile prima di avviarsi:
+# il bot fa polling verso Telegram e aggiorna yt-dlp all'avvio, quindi
+# senza rete fallirebbe subito.
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Il servizio gira come l'utente normale che ha eseguito l'installazione,
+# mai come root: la venv, "data/" e "temp/" appartengono a quell'utente.
+User=__UTENTE__
+Group=__GRUPPO__
+# La directory di lavoro deve essere la radice del progetto, perché
+# core/config.py usa percorsi relativi ("data", "temp") rispetto ad essa.
+WorkingDirectory=__CARTELLA_PROGETTO__
+# Usa l'interprete della venv del progetto, non il Python di sistema: il bot
+# esegue "pip install --upgrade yt-dlp" con questo stesso interprete ad ogni
+# avvio, e il Python di sistema su molte distribuzioni recenti lo rifiuta.
+ExecStart=__PYTHON__ main.py
+# Riavvia il bot da solo qualunque sia il motivo per cui il processo termina,
+# con una pausa tra un tentativo e l'altro per non entrare in un ciclo stretto
+# di riavvii. Serve "always" e non "on-failure" perché main.py cattura ogni
+# eccezione al livello più esterno e la registra nel log, uscendo comunque con
+# codice zero: per systemd anche un crash sembrerebbe una chiusura regolare, e
+# con "on-failure" il bot resterebbe spento.
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
