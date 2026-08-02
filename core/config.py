@@ -65,7 +65,16 @@ ANTI_SPAM_INTERVAL: int = int(os.getenv('ANTI_SPAM_INTERVAL', 15))
 ANTI_SPAM_CALLBACK_INTERVAL: float = float(os.getenv('ANTI_SPAM_CALLBACK_INTERVAL', 1.0))
 CONCURRENT_DOWNLOAD_LIMIT: int = int(os.getenv('CONCURRENT_DOWNLOAD_LIMIT', 5))
 DB_FILE: str = os.getenv('DB_FILE', 'songs_cache.db')
-ENABLE_INLINE_SEARCH = True 
+ENABLE_INLINE_SEARCH = True
+
+# Riga di comando arbitraria lanciata dopo che una canzone è stata salvata nella libreria locale
+# (es. una sincronizzazione rclone verso il cloud). Viene eseguita da PowerShell su Windows e da
+# bash su Linux; vuota significa nessun comando. L'esecuzione è in
+# core/services/post_save_command.py.
+POST_SAVE_COMMAND: str = os.getenv('POST_SAVE_COMMAND', '').strip()
+# Secondi di attesa prima di lanciare il comando: raggruppa più salvataggi ravvicinati in una
+# sola esecuzione invece di lanciarne una per canzone.
+POST_SAVE_COMMAND_DELAY: int = int(os.getenv('POST_SAVE_COMMAND_DELAY', 10))
 
 CHAT_DB_PATH = os.path.join(DATA_PATH, "music_chat.db")
 CHANNEL_DB_PATH = os.path.join(DATA_PATH, "music_channel.db")

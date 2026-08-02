@@ -23,6 +23,7 @@ from core.services.music_library import (
   pending_exists,
 )
 from core.services import library_priority
+from core.services.post_save_command import schedule_post_save_command
 
 # Delay before an unclaimed pending file is discarded, allineato alla finestra di scadenza delle info in cache.
 PENDING_SAVE_TIMEOUT_SEC = INFO_EXPIRATION_HOURS * 3600
@@ -544,6 +545,9 @@ async def save_to_directory(cq: CallbackQuery):
 
   logger.info(f"Song saved for key {key} to folder: {subfolder or 'MUSIC_DIR'}")
   discard_pending(key)
+  # Il comando esterno (es. sincronizzazione rclone) parte in background dopo una breve attesa,
+  # quindi la risposta all'utente non aspetta la fine della copia.
+  schedule_post_save_command()
   try:
     if cq.message:
       await cq.message.edit_text(strings.SAVED_TO.format(subfolder or "MUSIC_DIR"), reply_markup=None) # type: ignore

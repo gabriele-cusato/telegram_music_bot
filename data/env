@@ -21,3 +21,10 @@ DB_FILE=songs_cache.db
 INFO_EXPIRATION_HOURS=24
 MUSIC_STORAGE_CHANNEL_ID=
 
+# Post-save command
+# Riga di comando eseguita dopo il salvataggio di una canzone (PowerShell su Windows, bash su Linux).
+# Vuota = disattivato. Esempio: POST_SAVE_COMMAND=/usr/bin/rclone copy /home/raspuser/Music pcloud:Music --transfers 4 --log-level NOTICE
+POST_SAVE_COMMAND=
+# Secondi di attesa prima di lanciarlo, per raggruppare più salvataggi ravvicinati in una sola esecuzione.
+POST_SAVE_COMMAND_DELAY=10
+
