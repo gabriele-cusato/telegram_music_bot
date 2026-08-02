@@ -247,7 +247,12 @@ async def message_handler(message: types.Message):
     if now - user_last_request_time.get(user_id, 0) < ANTI_SPAM_INTERVAL: return
     user_last_request_time[user_id] = now
 
-    if not query: return
+    # `/music` scelto dal menu comandi di Telegram viene inviato subito, senza dare modo di
+    # aggiungere il nome della canzone: qui si spiega all'utente come si scrive il comando
+    # completo, invece di restare in silenzio e sembrare che il bot non funzioni.
+    if not query:
+        await message.answer(strings.MUSIC_USAGE)
+        return
 
     try:
         await message.delete()

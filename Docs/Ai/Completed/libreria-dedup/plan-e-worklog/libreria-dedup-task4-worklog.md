@@ -7,7 +7,7 @@
 - [x] messages.py dedup_command_handler: try/except TelegramBadRequest sull'invio + fallback message + pop sessione se invio fallisce
 - [x] (Difensivo) dd_ok: controllo path dentro MUSIC_DIR prima di os.remove
 - [x] Verificato py_compile (venv) + prova scratchpad dell'invariante (molti gruppi, testo sotto limite, session == bottoni)
-- [ ] DA TESTARE: /delete sulla cartella vera non dà più "message too long"; cancella solo i mostrati
+- [x] DA TESTARE: /delete sulla cartella vera non dà più "message too long"; cancella solo i mostrati
 
 DA TESTARE
 

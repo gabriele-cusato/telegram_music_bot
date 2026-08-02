@@ -5,6 +5,10 @@ LOG_COMMAND_PREFIX = "log"
 PRIORITY_COMMAND_PREFIX = "priority"
 DEDUP_COMMAND_PREFIX = "delete"
 
+# Il bot invia i messaggi con parse_mode HTML, quindi i segnaposto tra parentesi angolari
+# vanno scritti con le entità &lt; e &gt;: scritti come tag veri Telegram rifiuterebbe il messaggio.
+MUSIC_USAGE = "To search for music write music &lt;song_name&gt;, Es: music &lt;Esibizionista&gt;"
+
 LOG_USAGE = "⚠️ Usage: log [info|error|warning] [N] [gg/mm/aa]"
 LOG_NO_RESULTS = "No matching log entries."
 LOG_TRUNCATED = "⚠️ Output truncated: showing only the most recent messages."

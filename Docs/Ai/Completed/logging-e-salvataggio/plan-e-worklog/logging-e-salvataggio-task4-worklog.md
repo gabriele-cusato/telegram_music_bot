@@ -13,7 +13,7 @@
 - [x] main.py: prune di temp/pending all'avvio dopo cleanup_expired_data
 - [x] Verificato che `savedir_` resta invariato e funziona sul messaggio del picker
 - [x] Verificato `python -m py_compile` su tutti i file toccati
-- [ ] DA TESTARE: flusso runtime Save Srv -> picker -> salvataggio; Not right? non sparisce; prune all'avvio
+- [x] DA TESTARE: flusso runtime Save Srv -> picker -> salvataggio; Not right? non sparisce; prune all'avvio
 
 ## Stato task
 DA TESTARE
