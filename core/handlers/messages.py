@@ -364,10 +364,10 @@ async def message_handler(message: types.Message):
         if base:
             cleanup_temp_files(base)
 
-    err = await message.answer(msg_error)
-    await asyncio.sleep(5)
-    try: await err.delete()
-    except Exception: pass
+    # Il messaggio di errore resta in chat e non viene più cancellato dopo pochi
+    # secondi: è l'unico posto in cui l'utente vede il motivo del fallimento, e
+    # farlo sparire da solo costringeva a rileggere il log del server.
+    await message.answer(msg_error)
 
 
 @dp.message(F.audio)

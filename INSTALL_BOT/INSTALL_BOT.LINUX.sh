@@ -290,9 +290,11 @@ else
     read -rp "  MUSIC_DIR [$MUSIC_DIR_DEFAULT]: " MUSIC_DIR_INSERITO
     MUSIC_DIR_INSERITO="${MUSIC_DIR_INSERITO:-$MUSIC_DIR_DEFAULT}"
 
+    # L'uso in chat privata e' il modo normale di usare questo bot, quindi il
+    # valore predefinito e' 'true': serve scrivere 'false' per disattivarlo.
     echo "  ALLOW_PRIVATE_CHAT: se 'true' il bot risponde anche in chat privata, non solo nei gruppi."
-    read -rp "  ALLOW_PRIVATE_CHAT [false]: " ALLOW_PRIVATE_CHAT_INSERITO
-    ALLOW_PRIVATE_CHAT_INSERITO="${ALLOW_PRIVATE_CHAT_INSERITO:-false}"
+    read -rp "  ALLOW_PRIVATE_CHAT [true]: " ALLOW_PRIVATE_CHAT_INSERITO
+    ALLOW_PRIVATE_CHAT_INSERITO="${ALLOW_PRIVATE_CHAT_INSERITO:-true}"
 
     echo "  ALLOWED_CHAT_ID: id delle chat di gruppo autorizzate, separati da virgola."
     echo "  Vuoto = tutte le chat di gruppo autorizzate. 'false' = nessuna chat autorizzata."

@@ -82,14 +82,17 @@ else {
 
 # --- Terminazione degli eventuali processi del bot rimasti attivi ---
 
-# Riconosce i processi da terminare dalla riga di comando che contiene il
-# percorso della radice del progetto: e' lo stesso criterio gia' usato da
-# stop_bot.bat (che cercava 'telegram_music_bot' scritto a mano), qui
-# generalizzato alla radice reale e includendo anche pythonw.exe. Questo
-# evita di terminare processi Python estranei al progetto.
+# Riconosce i processi da terminare dalla riga di comando, che deve contenere
+# sia il percorso della radice del progetto sia 'main.py'. E' lo stesso
+# criterio gia' usato da stop_bot.bat (che cercava 'telegram_music_bot'
+# scritto a mano), qui generalizzato alla radice reale e includendo anche
+# pythonw.exe. La richiesta di 'main.py' e' indispensabile: la sola radice
+# verrebbe soddisfatta anche da programmi che usano l'interprete della venv
+# del progetto senza essere il bot, come i language server di VS Code, che
+# verrebbero cosi terminati insieme all'editor aperto.
 $radiceEscapata = [System.Management.Automation.WildcardPattern]::Escape($ProjectRoot)
 $processiBot = Get-CimInstance Win32_Process -Filter "Name='python.exe' OR Name='pythonw.exe'" |
-    Where-Object { $_.CommandLine -like "*$radiceEscapata*" }
+    Where-Object { $_.CommandLine -like "*$radiceEscapata*" -and $_.CommandLine -like '*main.py*' }
 
 if ($processiBot) {
     foreach ($processo in $processiBot) {
@@ -110,7 +113,7 @@ else {
 
 $attivitaResidua = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
 $processiResidui = Get-CimInstance Win32_Process -Filter "Name='python.exe' OR Name='pythonw.exe'" |
-    Where-Object { $_.CommandLine -like "*$radiceEscapata*" }
+    Where-Object { $_.CommandLine -like "*$radiceEscapata*" -and $_.CommandLine -like '*main.py*' }
 
 Write-Host ""
 Write-Host "--- Riepilogo ---"

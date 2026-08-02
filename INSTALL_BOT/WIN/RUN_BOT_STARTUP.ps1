@@ -183,9 +183,13 @@ Start-Sleep -Seconds 3
 
 # I caratteri jolly eventualmente presenti nel percorso della radice vengono
 # neutralizzati, cosi il confronto con -like cerca il percorso letterale.
+# Oltre alla radice del progetto la riga di comando deve contenere anche
+# 'main.py': la sola radice non basta perche' altri programmi usano
+# l'interprete della venv del progetto per scopi diversi dal bot (ad esempio
+# i language server di VS Code), e verrebbero scambiati per il bot.
 $radiceEscapata = [System.Management.Automation.WildcardPattern]::Escape($ProjectRoot)
 $processoBot = Get-CimInstance Win32_Process -Filter "Name='python.exe' OR Name='pythonw.exe'" |
-    Where-Object { $_.CommandLine -like "*$radiceEscapata*" }
+    Where-Object { $_.CommandLine -like "*$radiceEscapata*" -and $_.CommandLine -like '*main.py*' }
 
 Write-Host ""
 Write-Host "--- Riepilogo ---"

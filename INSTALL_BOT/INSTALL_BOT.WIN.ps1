@@ -328,8 +328,10 @@ if (Test-Path $percorsoEnv -PathType Leaf) {
     $musicDirInserito = Read-Host "Cartella dove il bot salva le canzoni scaricate [invio per usare: $musicDirDefault]"
     $musicDir = if ([string]::IsNullOrWhiteSpace($musicDirInserito)) { $musicDirDefault } else { $musicDirInserito }
 
-    $allowPrivateRisposta = Read-Host "Permettere l'uso del bot anche nelle chat private, non solo nei gruppi? (s/N)"
-    $allowPrivateChat = if ($allowPrivateRisposta -match '^[sS]') { 'true' } else { 'false' }
+    # L'uso in chat privata è il modo normale di usare questo bot, quindi la
+    # risposta predefinita è "sì": serve una N esplicita per disattivarlo.
+    $allowPrivateRisposta = Read-Host "Permettere l'uso del bot anche nelle chat private, non solo nei gruppi? (S/n)"
+    $allowPrivateChat = if ($allowPrivateRisposta -match '^[nN]') { 'false' } else { 'true' }
 
     $allowedChatId = Read-Host "ID delle chat di gruppo autorizzate, separati da virgola [invio = tutte le chat di gruppo, scrivi 'false' per nessuna]"
 

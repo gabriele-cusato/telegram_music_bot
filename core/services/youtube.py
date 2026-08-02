@@ -77,7 +77,6 @@ async def search_multiple(query: str) -> List[Dict[str, Any]]:
         'skip_download': True,
         'noplaylist': True,
         'extract_flat': True,
-        'extractor_args': {'youtube': {'client': 'android'}},
         'encoding': 'utf-8',
         'postprocessors': [],
     }
@@ -128,7 +127,6 @@ async def download_by_url(url: str):
         'format': 'bestaudio/best',
         'noplaylist': True,
         'quiet': True,
-        'extractor_args': {'youtube': {'client': 'android'}},
         'no_warnings': True,
         'skip_download': True,
         'encoding': 'utf-8',
@@ -164,7 +162,6 @@ async def download_by_url(url: str):
             'quiet': True,
             'outtmpl': os.path.join(TEMP_PATH, f'{unique_id}.%(ext)s'),
             'writethumbnail': True,
-            'extractor_args': {'youtube': {'client': 'android'}},
             'no_warnings': True,
             'encoding': 'utf-8',
             'postprocessors': [
