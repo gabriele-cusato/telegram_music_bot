@@ -123,40 +123,13 @@ async def search_multiple(query: str) -> List[Dict[str, Any]]:
 
 
 async def download_by_url(url: str):
-    info_opts = {
-        'format': 'bestaudio/best',
-        'noplaylist': True,
-        'quiet': True,
-        'no_warnings': True,
-        'skip_download': True,
-        'encoding': 'utf-8',
-        'postprocessors': [],
-    }
-
     base = None
 
     def pre_check_and_download():
-
-        with YoutubeDL(info_opts) as ydl: # type: ignore
-            try:
-                info = ydl.extract_info(url, download=False)
-            except DownloadError as e:
-                logger.error(f"yt-dlp pre-check failed for {url}: {e}")
-                raise Exception(f"YT_DOWNLOAD_FAILED: {e}")
-            except Exception:
-                raise
-
-            duration = info.get("duration")
-            if duration is not None and duration > MAX_SONG_DURATION_SEC:
-                raise Exception("LONG_AUDIO")
-
-            filesize_estimate = info.get('filesize') or info.get('filesize_approx')
-
-            if filesize_estimate is not None and filesize_estimate > MAX_FILE_SIZE_BYTES:
-                raise Exception("TOO_LARGE_PRECHECK")
-
+        # unique_id serve già qui perché entra nell'outtmpl dell'unica configurazione
+        # usata sia per l'estrazione dei metadati sia per il download vero e proprio.
         unique_id = uuid.uuid4().hex
-        download_opts = {
+        ydl_opts = {
             'format': 'bestaudio/best',
             'noplaylist': True,
             'quiet': True,
@@ -177,9 +150,40 @@ async def download_by_url(url: str):
             ]
         }
 
-        with YoutubeDL(download_opts) as ydl: # type: ignore
+        with YoutubeDL(ydl_opts) as ydl: # type: ignore
+            # Unica interrogazione a YouTube della funzione: prima si estraggono le informazioni
+            # senza scaricare (download=False non esegue né la selezione definitiva del file né
+            # i postprocessor), poi si eseguono i controlli preventivi, e solo se passano si
+            # riusano le stesse informazioni per il download. In precedenza qui c'erano due
+            # extract_info separate, cioè due giri completi di rete verso YouTube: ognuno costava
+            # circa 5 secondi (quasi tutta attesa di rete, non calcolo), sprecati ogni volta che
+            # il pre-check falliva o anche quando passava, perché il secondo giro ripeteva da capo
+            # lo stesso lavoro del primo.
             try:
-                info = ydl.extract_info(url, download=True)
+                info = ydl.extract_info(url, download=False)
+            except DownloadError as e:
+                logger.error(f"yt-dlp pre-check failed for {url}: {e}")
+                raise Exception(f"YT_DOWNLOAD_FAILED: {e}")
+            except Exception:
+                raise
+
+            duration = info.get("duration")
+            if duration is not None and duration > MAX_SONG_DURATION_SEC:
+                raise Exception("LONG_AUDIO")
+
+            filesize_estimate = info.get('filesize') or info.get('filesize_approx')
+
+            if filesize_estimate is not None and filesize_estimate > MAX_FILE_SIZE_BYTES:
+                raise Exception("TOO_LARGE_PRECHECK")
+
+            # process_ie_result riparte dalle informazioni già estratte (comprese le formats già
+            # risolte da YouTube) senza richiamare l'estrattore: è lo stesso meccanismo che yt-dlp
+            # usa per riprendere un download da un file json salvato in precedenza
+            # (download_with_info_file in YoutubeDL.py), a differenza di extract_info che
+            # interrogherebbe di nuovo YouTube da zero. Con download=True esegue la selezione del
+            # formato, il download effettivo e i postprocessor ffmpeg configurati sopra.
+            try:
+                info = ydl.process_ie_result(info, download=True)
                 base = os.path.splitext(ydl.prepare_filename(info))[0]
             except DownloadError as e:
                 logger.error(f"yt-dlp download failed for {url}: {e}")
