@@ -9,6 +9,9 @@ Indice per argomento delle feature concluse (cartella `Completed/`).
 - [metadati-veri](metadati-veri/metadati-veri.md) — ricerca YouTube Music, titolo/artista/album puliti, nome file titolo-only, tag ID3
 - [libreria-dedup](libreria-dedup/libreria-dedup.md) — gestione priorità cartelle, comando `/priority`, deduplica fuzzy cross-folder `/delete`, liste deselezionabili
 
+## Sincronizzazione e Integrazioni esterne
+- [comando-post-salvataggio](comando-post-salvataggio/comando-post-salvataggio.md) — `POST_SAVE_COMMAND` shell arbitraria dopo il salvataggio, esecuzione non bloccante e raggruppata, sincronizzazione rclone bisync con pcloud via timer systemd
+
 ## Interfaccia Utente
 - [comandi-slash-ritocchi](comandi-slash-ritocchi/comandi-slash-ritocchi.md) — comandi con slash (`/log`, `/priority`, `/delete`, `/music`), menu Telegram, bottone Confirm Order, elenco file eliminati
 
