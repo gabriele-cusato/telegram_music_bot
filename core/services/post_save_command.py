@@ -64,6 +64,29 @@ def schedule_post_save_command():
     _runner_task = asyncio.create_task(_run_pending_command())
 
 
+async def wait_for_completion(timeout: float):
+    """Attende la fine dell'attività in background del comando post-salvataggio, entro il limite di
+    tempo indicato dal chiamante. Ritorna subito se non c'è nessuna attività in corso o già conclusa.
+    Serve al riavvio del bot dopo un aggiornamento di yt-dlp (core.services.restart): un bisync
+    interrotto a metà può richiedere un --resync manuale per ripartire, quindi il riavvio deve
+    attendere che il comando sia finito invece di troncarlo. Se il limite scade, registra un WARNING
+    e ritorna comunque, così un comando esterno bloccato non impedisce per sempre il riavvio.
+    """
+    if _runner_task is None or _runner_task.done():
+        return
+
+    try:
+        # asyncio.shield evita che l'eventuale cancellazione lato chiamante (dovuta al timeout)
+        # si propaghi al task condiviso _runner_task, che deve continuare fino alla sua fine naturale.
+        await asyncio.wait_for(asyncio.shield(_runner_task), timeout=timeout)
+    except asyncio.TimeoutError:
+        logger.warning(f"Post-save command did not finish within {timeout}s; proceeding anyway.")
+    except Exception:
+        # L'attività è già finita male e il suo errore è stato registrato al suo interno: qui conta
+        # solo che non sia più in corso, quindi l'eccezione non deve fermare chi stava attendendo.
+        logger.warning("The post-save command task ended with an error while waiting for it.")
+
+
 async def _run_pending_command():
     """Attende la finestra di raggruppamento, esegue il comando e lo ripete se nel frattempo sono
     arrivati altri salvataggi."""

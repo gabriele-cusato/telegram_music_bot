@@ -8,17 +8,38 @@ import sys
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from aiogram.types import BotCommand, BotCommandScopeAllPrivateChats, BotCommandScopeDefault
+from core import strings
 from core.config import dp, bot, logger, CONCURRENT_DOWNLOAD_LIMIT, ENABLE_INLINE_SEARCH, CHAT_DB_PATH, CHANNEL_DB_PATH
 from core.services import storage
+from core.services import restart
 from core.services.music_library import prune_orphan_pending
 from core.services.youtube import close_global_session
 from core.handlers import messages, callbacks
+# Importato per il solo effetto della registrazione: il modulo non espone nulla da chiamare, ma
+# contiene l'handler decorato con @dp.error che raccoglie le eccezioni non gestite dai comandi.
+from core.handlers import errors  # noqa: F401
 from core.handlers.channel_posts import router as channel_router
 from core.yt_dlp_update.yt_dlp_manager import initialize as initialize_yt_dlp 
 
 if ENABLE_INLINE_SEARCH:
     from core.handlers.inline_mode import router as inline_router
     from core.services.inline_search.database import init_db as init_inline_db
+
+
+async def _resume_pending_search(pending: dict, status):
+    """Rilancia la ricerca interrotta dal riavvio (core.services.restart), nella stessa chat.
+
+    Gira come attività separata avviata da `main()`, fuori dal ciclo che gestisce gli aggiornamenti
+    Telegram: l'handler `@dp.error` intercetta solo le eccezioni nate dagli aggiornamenti in arrivo,
+    non quelle di un'attività creata a mano, che altrimenti resterebbero silenziose.
+    """
+    try:
+        await messages.search_and_deliver(
+            pending["chat_id"], pending["user_id"], pending["requester_name"],
+            pending["query"], pending["reply_to_message_id"], status
+        )
+    except Exception:
+        logger.exception("Unhandled error while resuming the search after a yt-dlp restart.")
 
 
 async def main():
@@ -77,6 +98,17 @@ async def main():
         logger.info("Bot commands menu registered successfully.")
     except Exception as e:
         logger.warning(f"Failed to register bot commands menu: {e}")
+
+    # Ripresa dopo un riavvio dovuto a un aggiornamento di yt-dlp (core.services.restart): se una
+    # ricerca era in corso al momento del riavvio, il suo esito riparte da sola nella stessa chat,
+    # senza che l'utente debba riscrivere il comando `music`.
+    pending = restart.read_and_clear_pending_request()
+    if pending:
+        await bot.send_message(pending["chat_id"], strings.STATUS_RESUME_AFTER_UPDATE.format(pending["query"]))
+        status = await bot.send_message(pending["chat_id"], strings.STATUS_SEARCHING)
+        # asyncio.create_task, non await: attenderla qui ritarderebbe l'avvio del polling e il bot
+        # resterebbe muto per tutta la durata della ricerca e del download ripresi.
+        asyncio.create_task(_resume_pending_search(pending, status))
 
     try:
         await dp.start_polling(bot)

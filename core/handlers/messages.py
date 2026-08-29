@@ -22,7 +22,9 @@ from core.services.storage import (
 from core.services.log_reader import read_log_records, parse_ddmmyy_to_iso
 from core.services import library_priority
 from core.services.library_dedup import find_duplicate_groups
+from core.services import restart
 from core.handlers.callbacks import offer_disk_save, build_priority_kb, build_dedup_session, dedup_sessions
+from core.yt_dlp_update import yt_dlp_manager
 
 class BotProcessingError(Exception): pass
 class NoResultsError(BotProcessingError): pass
@@ -94,9 +96,43 @@ def _parse_log_args(args_text: str):
     return level, limit, date_iso, True
 
 
+def _split_long_record(record: str) -> list:
+    """Spezza un singolo record di log in pezzi che, una volta passati da `html.escape`, restano
+    sotto `LOG_MAX_CHUNK_CHARS` caratteri.
+
+    Serve perché un record può superare da solo il limite di Telegram: `log_reader` accoda al record
+    che le precede tutte le righe senza timestamp, quindi un traceback o l'esito di un comando
+    esterno diventano un unico record da migliaia di caratteri, e il messaggio viene rifiutato con
+    "message is too long".
+
+    Il taglio si misura sulla lunghezza del testo **dopo** l'escape, perché un carattere come `&`
+    diventa `&amp;` e occupa cinque caratteri invece di uno, ma avviene sul testo **grezzo**: tagliare
+    dentro un'entità già scritta produrrebbe HTML non valido, che Telegram rifiuta a sua volta.
+    """
+    pieces = []
+    current_chars = []
+    current_escaped_len = 0
+
+    for char in record:
+        escaped_len = len(html.escape(char))
+        if current_chars and current_escaped_len + escaped_len > LOG_MAX_CHUNK_CHARS:
+            pieces.append("".join(current_chars))
+            current_chars = []
+            current_escaped_len = 0
+        current_chars.append(char)
+        current_escaped_len += escaped_len
+
+    pieces.append("".join(current_chars))
+    return pieces
+
+
 def _build_log_chunks(records):
     """Compone i record (già filtrati) in blocchi di testo HTML-escaped sotto il limite Telegram."""
-    escaped_records = [html.escape(record) for record in records]
+    escaped_records = [
+        html.escape(piece)
+        for record in records
+        for piece in _split_long_record(record)
+    ]
 
     chunks = []
     current_lines = []
@@ -216,50 +252,17 @@ async def dedup_command_handler(message: types.Message):
         await message.answer(strings.DEDUP_SEND_FAILED)
 
 
-@dp.message()
-async def message_handler(message: types.Message):
-    user_id = message.from_user.id
+async def search_and_deliver(chat_id, user_id, requester_name, query, reply_to_message_id, status):
+    """Cerca, scarica e invia il brano trovato, poi gestisce gli errori del comando `music`.
+
+    È la parte di `message_handler` che non dipende dal messaggio Telegram originale: riceve solo i
+    dati necessari (chat, utente, testo cercato, messaggio a cui rispondere, messaggio di stato già
+    inviato), così può essere richiamata anche da `main.py` dopo un riavvio dovuto a un aggiornamento
+    di yt-dlp (core.services.restart), quando il messaggio che ha innescato la ricerca non esiste
+    più.
+    """
     base = None
     key = None
-    status = None
-
-    if message.date.timestamp() < BOT_START_TIME: return
-    
-    is_private_chat = message.chat.type == 'private'
-    is_allowed_group: bool = (0 in ALLOWED_CHAT_IDS or message.chat.id in ALLOWED_CHAT_IDS)
-
-    if is_private_chat:
-        if not ALLOW_PRIVATE_CHAT:
-            return
-            
-    elif not is_allowed_group:
-        return
-
-    if user_id in BLOCKED_USER_IDS:
-        logger.info(f"Blocked user {user_id} tried to use the bot.")
-        return
-
-    text = message.text or ""
-    name, query = _split_command(text)
-    if name != "music": return
-
-    now = time.time()
-    if now - user_last_request_time.get(user_id, 0) < ANTI_SPAM_INTERVAL: return
-    user_last_request_time[user_id] = now
-
-    # `/music` scelto dal menu comandi di Telegram viene inviato subito, senza dare modo di
-    # aggiungere il nome della canzone: qui si spiega all'utente come si scrive il comando
-    # completo, invece di restare in silenzio e sembrare che il bot non funzioni.
-    if not query:
-        await message.answer(strings.MUSIC_USAGE)
-        return
-
-    try:
-        await message.delete()
-    except Exception:
-        pass
-
-    status = await message.answer(strings.STATUS_SEARCHING)
 
     semaphore = dp['download_semaphore']
 
@@ -276,14 +279,13 @@ async def message_handler(message: types.Message):
             info, file, thumb, base = await download_by_url(url)
 
             if not file: raise NoAudioError("NO_AUDIO")
-            
+
         audio = FSInputFile(file, filename=os.path.basename(file))
 
         thumbnail = None
         if thumb:
             thumbnail = FSInputFile(thumb, filename=os.path.basename(thumb))
 
-        sender_name = message.from_user.full_name
         key = uuid.uuid4().hex[:8]
 
         # Titolo/artista puliti quando la fonte è YT Music (track/artist); fallback a title/uploader
@@ -299,7 +301,7 @@ async def message_handler(message: types.Message):
         }
         set_song_data(key, 0, song_data)
 
-        btn_text = strings.BUTTON_REQUESTER.format(sender_name)
+        btn_text = strings.BUTTON_REQUESTER.format(requester_name)
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text=btn_text, callback_data=f"info_{key}"),
              InlineKeyboardButton(text=strings.BUTTON_NOT_RIGHT, callback_data=f"alt_{key}")],
@@ -309,9 +311,9 @@ async def message_handler(message: types.Message):
         await status.delete()
 
         sent = await bot.send_audio(
-            chat_id=message.chat.id, audio=audio, title=clean_title,
+            chat_id=chat_id, audio=audio, title=clean_title,
             performer=clean_artist, thumbnail=thumbnail, reply_markup=kb,
-            reply_to_message_id=message.reply_to_message.message_id if message.reply_to_message else None
+            reply_to_message_id=reply_to_message_id
         )
 
         if ENABLE_INLINE_SEARCH and sent.audio:
@@ -322,7 +324,7 @@ async def message_handler(message: types.Message):
 
         set_song_data(key, sent.message_id, song_data)
 
-        await offer_disk_save(bot, message.chat.id, key, file, sent.message_id)
+        await offer_disk_save(bot, chat_id, key, file, sent.message_id)
 
     except NoResultsError:
         msg_error = strings.ERROR_PREFIX + strings.ERROR_NO_RESULTS
@@ -367,7 +369,78 @@ async def message_handler(message: types.Message):
     # Il messaggio di errore resta in chat e non viene più cancellato dopo pochi
     # secondi: è l'unico posto in cui l'utente vede il motivo del fallimento, e
     # farlo sparire da solo costringeva a rileggere il log del server.
-    await message.answer(msg_error)
+    await bot.send_message(chat_id, msg_error)
+
+
+@dp.message()
+async def message_handler(message: types.Message):
+    user_id = message.from_user.id
+
+    if message.date.timestamp() < BOT_START_TIME: return
+
+    is_private_chat = message.chat.type == 'private'
+    is_allowed_group: bool = (0 in ALLOWED_CHAT_IDS or message.chat.id in ALLOWED_CHAT_IDS)
+
+    if is_private_chat:
+        if not ALLOW_PRIVATE_CHAT:
+            return
+
+    elif not is_allowed_group:
+        return
+
+    if user_id in BLOCKED_USER_IDS:
+        logger.info(f"Blocked user {user_id} tried to use the bot.")
+        return
+
+    text = message.text or ""
+    name, query = _split_command(text)
+    if name != "music": return
+
+    now = time.time()
+    if now - user_last_request_time.get(user_id, 0) < ANTI_SPAM_INTERVAL: return
+    user_last_request_time[user_id] = now
+
+    # `/music` scelto dal menu comandi di Telegram viene inviato subito, senza dare modo di
+    # aggiungere il nome della canzone: qui si spiega all'utente come si scrive il comando
+    # completo, invece di restare in silenzio e sembrare che il bot non funzioni.
+    if not query:
+        await message.answer(strings.MUSIC_USAGE)
+        return
+
+    try:
+        await message.delete()
+    except Exception:
+        pass
+
+    reply_to_message_id = message.reply_to_message.message_id if message.reply_to_message else None
+
+    # Il controllo dell'aggiornamento di yt-dlp avviene qui, prima di acquisire il semaforo dei
+    # download: la procedura di riavvio del task2 attende che tutti i permessi del semaforo siano
+    # liberi, e se questo stesso comando ne tenesse occupato uno l'attesa non finirebbe mai.
+    if yt_dlp_manager.check_and_update_needed():
+        status = await message.answer(strings.STATUS_CHECKING_UPDATE)
+        updated = await yt_dlp_manager.run_update()
+        if updated:
+            # Una versione nuova è stata installata: yt-dlp è già caricato in memoria con la versione
+            # vecchia (vedi core.services.restart), quindi la ricerca riprende solo dopo il riavvio.
+            # Il messaggio di stato resta in chat, sarà il processo nuovo a rispondere.
+            await status.edit_text(strings.STATUS_UPDATE_RESTARTING)
+            restart.save_pending_request(
+                chat_id=message.chat.id,
+                user_id=user_id,
+                requester_name=message.from_user.full_name,
+                query=query,
+                reply_to_message_id=reply_to_message_id,
+            )
+            await restart.restart_process()
+            return
+        await status.edit_text(strings.STATUS_SEARCHING)
+    else:
+        status = await message.answer(strings.STATUS_SEARCHING)
+
+    await search_and_deliver(
+        message.chat.id, user_id, message.from_user.full_name, query, reply_to_message_id, status
+    )
 
 
 @dp.message(F.audio)

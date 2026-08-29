@@ -9,6 +9,16 @@ Raccolta delle decisioni valide tra le sessioni. Aggiornare quando l'utente pren
 - I `logger.info` devono finire sia su console (stdout) sia su file `data/bot.log`. Quindi `file_handler` a livello `INFO` (prima era `ERROR`). (deciso 2026-07-05)
 - Comando `log` in chat per leggere `bot.log`: **abilitato solo in chat privata col bot**, indipendente da `ALLOW_PRIVATE_CHAT`. Motivo: i log contengono user id/query/errori, esporli in gruppo è una fuga di dati. (deciso 2026-07-05)
 
+## Aggiornamento di yt-dlp
+- L'aggiornamento **non gira più all'avvio** ma **prima della ricerca**, dentro il comando `music`, conservando il limite di un controllo ogni 24 ore. Motivo: il bot sul Raspberry resta acceso per settimane, quindi il controllo all'avvio non scattava mai e i download finivano in `HTTP Error 403: Forbidden` finché non si riavviava a mano. (deciso 2026-08-29)
+- Feedback in chat: se il controllo non è dovuto l'utente vede solo `🔍 Searching...` come sempre; se è dovuto vede prima un messaggio di controllo in corso, e solo quando una versione nuova viene davvero installata un messaggio di aggiornamento e riavvio. (deciso 2026-08-29)
+- Dopo un aggiornamento riuscito il processo **si riavvia da solo con `os.execv`**, non con `sys.exit()` affidandosi al sorvegliante. Motivo: yt-dlp è già caricato in memoria e la versione nuova entra solo in un processo nuovo; `os.execv` non dipende da systemd né dall'attività pianificata di Windows, che con `-RestartCount 3` riavvia solo in caso di fallimento mentre `main.py` esce sempre con codice zero. Su Windows `os.execv` avvia un processo nuovo invece di sostituire l'immagine, quindi l'attività pianificata lo perde di vista: limite accettato, l'installazione di riferimento è il Raspberry. (deciso 2026-08-29)
+- La ricerca che innesca il riavvio **riprende da sola**: viene salvata in `data/pending_restart_request.json` e rieseguita all'avvio successivo nella stessa chat. Alternativa scartata: chiedere all'utente di rimandare il comando. (deciso 2026-08-29)
+- Il riavvio attende la fine dei download in corso e del comando post-salvataggio, perché un `rclone bisync` troncato può richiedere un `--resync` manuale. Entrambe le attese hanno un limite di tempo oltre il quale si riavvia comunque. (deciso 2026-08-29)
+
+## Errori
+- Handler globale `@dp.error` (`core/handlers/errors.py`): ogni eccezione non gestita da un comando produce il traceback completo nel log con `logger.exception` e un messaggio breve in chat. Sostituisce la registrazione automatica di aiogram, ma il traceback resta integro: è la condizione con cui l'utente ha approvato la modifica del comportamento nativo. (deciso 2026-08-29)
+
 ## Audio / salvataggio
 - File audio salvati su disco in formato **MP3 riconvertito** (FFmpegExtractAudio 192k) con tag e copertina incorporati, non solo container rinominato. Re-encode lossy accettato per avere proprietà leggibili in Windows. (deciso 2026-07-05)
 - ~~Conferma "È la canzone giusta? [Sì][No]" prima del salvataggio.~~ **Revocato**: nessun messaggio di conferma aggiuntivo. (revocato 2026-07-05)

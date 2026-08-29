@@ -31,10 +31,16 @@ BUTTON_DEDUP_CONFIRM = "✅ Confirm delete"
 BUTTON_DEDUP_CANCEL = "❌ Cancel"
 
 STATUS_SEARCHING = "🔍 Searching..."
+STATUS_CHECKING_UPDATE = "🔄 Checking for a yt-dlp update, the search will start right after..."
+STATUS_UPDATE_RESTARTING = "🔄 A yt-dlp update was installed. Restarting to load it, your search will resume automatically..."
+STATUS_RESUME_AFTER_UPDATE = "✅ Update completed, resuming your search for \"{}\"..."
 ERROR_PREFIX = "❌ Error: "
 ERROR_LONG_AUDIO = "Track is longer than 15 minutes."
 ERROR_TOO_LARGE = "File is larger than {} MB.".format(50)
 ERROR_NO_RESULTS = "No results found."
+# Mostrato quando un comando fallisce per un'eccezione non prevista dal comando stesso: il dettaglio
+# completo, con il traceback, resta nel log del server e si legge con `/log error`.
+ERROR_UNEXPECTED = "❌ Command failed unexpectedly. Full details are in the log: /log error"
 
 TOO_FAST_CALLBACK = ""
 
